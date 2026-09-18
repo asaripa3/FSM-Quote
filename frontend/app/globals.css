@@ -110,7 +110,7 @@ button { cursor: pointer; }
 button:disabled { cursor: not-allowed; }
 button:focus-visible, a:focus-visible { outline: 3px solid #eeb236; outline-offset: 5px; }
 .page-width { width: min(1320px, calc(100% - 96px)); margin-inline: auto; }
-.site-header { height: 82px; position: sticky; top: 0; z-index: 40; background: #f7f7f2f5; backdrop-filter: blur(16px); border-bottom: 1px solid var(--border); }
+.site-header { height: 82px; position: sticky; top: 0; z-index: 40; background: #f7f7f2a8; backdrop-filter: blur(20px) saturate(150%); border-bottom: 1px solid var(--border); transition: background-color .4s ease, border-color .4s ease, color .4s ease; }.site-header.over-sky { background: #148cfd; backdrop-filter: none; border-bottom-color: #ffffff2b; color: #fff; }.site-header.over-sky .site-brand strong, .site-header.over-sky nav a, .site-header.over-sky .nav-cta { color: #fff; }.site-header.over-sky .site-brand svg path { fill: #fff; }.site-header.over-sky .brand-divider { background: #ffffff5c; }.site-header.over-sky .brand-cross { color: #bfe2ff; }.site-header.over-sky .nav-cta { border-color: #ffffff70; background: #ffffff1f; }.site-header.over-sky .nav-cta:hover { background: #ffffff33; border-color: #fff; }.site-header.over-sky nav a:hover { color: #d9ecff; }@media (prefers-reduced-motion: reduce){.site-header{transition:none}}
 .nav-inner { height: 100%; display:flex; align-items:center; justify-content:space-between; gap: 25px; }
 .site-brand { display: flex; align-items: center; gap: 17px; white-space: nowrap; }
 .site-brand svg { width: 64px; height: auto; color: var(--blue); }
