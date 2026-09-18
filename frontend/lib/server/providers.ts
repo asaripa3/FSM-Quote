@@ -5,10 +5,11 @@ import { parseEnv } from "node:util";
 import { createHmac } from "node:crypto";
 
 // The existing backend .env is read only on the server. Never send keys to a client.
-let localEnv: Record<string, string> | undefined;
+// parseEnv returns Dict<string>, whose values are possibly undefined.
+let localEnv: Record<string, string | undefined> | undefined;
 export function secret(name: string) {
   if (!localEnv) { try { localEnv = parseEnv(readFileSync(resolve(process.cwd(), "../backend/.env"), "utf8")); } catch { localEnv = {}; } }
-  return process.env[name] || localEnv[name] || "";
+  return process.env[name] || localEnv?.[name] || "";
 }
 export function inferenceToken() {
   const key = secret("LIVEKIT_API_KEY"), secretKey = secret("LIVEKIT_API_SECRET");
