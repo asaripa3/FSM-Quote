@@ -2,13 +2,15 @@
 
 An Exa-powered parts-intelligence layer for field service. A technician's inspection note becomes verified replacement parts, live supplier prices, and a quote-ready estimate.
 
+**Live:** [fsm-quote.vercel.app](https://fsm-quote.vercel.app)
+
 ![A successful Exa run](docs/exa-run.png)
 
-Above: three reported faults resolved into two orderable parts. The closet's worn diaphragm and cracked vacuum breaker sleeve collapse into a single Sloan A-1101-A kit, because the kit's own contents list — quoted from the page Exa retrieved — already includes the vacuum breaker repair kit. The second line item would have been a wasted order. The panel on the right shows every Exa call the run made.
+Above: three reported faults resolved into two orderable parts. The closet's worn diaphragm and cracked vacuum breaker sleeve collapse into a single Sloan A-1101-A kit, because the kit's own contents list (quoted from the page Exa retrieved) already includes the vacuum breaker repair kit. The second line item would have been a wasted order. The panel on the right shows every Exa call the run made.
 
 ## Chosen market
 
-Field Service Management and MRO parts procurement — plumbing, HVAC, electrical and similar maintenance trades.
+Field Service Management and MRO parts procurement: plumbing, HVAC, electrical and similar maintenance trades.
 
 **Enterprise customer:** commercial field-service companies, multi-trade maintenance operators, facilities-service providers.
 
@@ -18,8 +20,8 @@ Field Service Management and MRO parts procurement — plumbing, HVAC, electrica
 
 Exa runs twice per job, after the note is parsed:
 
-1. **Identify the part** — `POST /search` with `systemPrompt` + `outputSchema`. Exa searches manufacturer and distributor pages and returns the orderable part, its contents, and a quote proving the fit. This is where messy field language ("diaphragm looks worn, vacuum breaker sleeve cracked") becomes one part number.
-2. **Price the part** — `POST /search` with per-result structured price extraction, returning current supplier listings, price evidence, SKU, availability and product images.
+1. **Identify the part.** `POST /search` with `systemPrompt` and `outputSchema`. Exa searches manufacturer and distributor pages and returns the orderable part, its contents, and a quote proving the fit. This is where messy field language ("diaphragm looks worn, vacuum breaker sleeve cracked") becomes one part number.
+2. **Price the part.** `POST /search` with per-result structured price extraction, returning current supplier listings, price evidence, SKU, availability and product images.
 
 Quote arithmetic is deterministic and never delegated to a model.
 
@@ -27,26 +29,29 @@ Quote arithmetic is deterministic and never delegated to a model.
 
 Nothing reaches the estimate on the model's word alone:
 
-- **Evidence must be on the page.** A quote is scored against the text Exa actually retrieved; below 95% token coverage the card is flagged, not shown as fact. Spec sheets arrive as PDF tables, so this is coverage-based rather than substring matching.
-- **The fixture must exist.** If the retrieved pages never mention the equipment the technician named, no part is resolved — the app asks for the model designation instead of substituting a similar valve's kit.
-- **Prices must be corroborated.** A price appears only when it is present in both the extraction's quote and the retrieved page text; otherwise the card reads "price needs confirmation".
+- **Evidence must be on the page.** A quote is scored against the text Exa actually retrieved; below 95% token coverage the card is flagged rather than shown as fact. Spec sheets arrive as PDF tables, so this is coverage-based rather than substring matching.
+- **The fixture must exist.** If the retrieved pages never mention the equipment the technician named, no part is resolved. The app asks for the model designation instead of substituting a similar valve's kit.
+- **Prices must be corroborated.** A price appears only when it is present in both the extraction's quote and the retrieved page text. Otherwise the card reads "price needs confirmation".
 - **Ambiguity is surfaced, not guessed.** Where variants differ only by flow rate or voltage and the note does not say which, the app asks rather than picking one.
 
-Toggle **Exa** off in the workspace header to see the same job with every Exa contribution withheld — the technician's words, no part number, no supplier, no price.
+Toggle **Exa** off in the workspace header to see the same job with every Exa contribution withheld: the technician's words, no part number, no supplier, no price.
 
 ## Structure
 
-A single Next.js app. The Exa work runs in route handlers (`app/api/parse`, `app/api/discover`,
-`app/api/source`), which deploy as serverless functions — there is no separate backend to run.
+A single Next.js app. The Exa work runs in route handlers, which deploy as serverless functions, so there is no separate backend to run.
 
-- `app/` — pages and the Exa API routes.
-- `lib/` — trade packs, quote maths, server-only provider calls.
+- `app/api/parse` turns the note into reported faults.
+- `app/api/discover` resolves those faults into orderable parts with Exa.
+- `app/api/source` prices a resolved part across suppliers with Exa.
+- `lib/` holds the trade packs, quote maths, and server-only provider calls.
 
 ## Run it
 
 ```bash
-cp .env.example .env.local   # fill in EXA_API_KEY and the LiveKit keys
+cp .env.example .env.local
 ```
+
+Fill in `EXA_API_KEY` and the LiveKit keys, then:
 
 ```bash
 npm install && npm run dev
@@ -56,5 +61,4 @@ Keys are read from the environment server-side and never reach the browser.
 
 ## Deploy
 
-Deploys to Vercel with no configuration — import the repository, then set `EXA_API_KEY`,
-`LIVEKIT_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in the project's environment variables.
+Deploys to Vercel with no configuration. Import the repository, then set `EXA_API_KEY`, `LIVEKIT_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in the project's environment variables.
