@@ -1,15 +1,10 @@
 import "server-only";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { parseEnv } from "node:util";
 import { createHmac } from "node:crypto";
 
-// The existing backend .env is read only on the server. Never send keys to a client.
-// parseEnv returns Dict<string>, whose values are possibly undefined.
-let localEnv: Record<string, string | undefined> | undefined;
+// Server-only environment. Keys are read from process.env (Vercel project settings, or .env.local
+// in development) and never reach the client.
 export function secret(name: string) {
-  if (!localEnv) { try { localEnv = parseEnv(readFileSync(resolve(process.cwd(), "../backend/.env"), "utf8")); } catch { localEnv = {}; } }
-  return process.env[name] || localEnv?.[name] || "";
+  return process.env[name] || "";
 }
 export function inferenceToken() {
   const key = secret("LIVEKIT_API_KEY"), secretKey = secret("LIVEKIT_API_SECRET");

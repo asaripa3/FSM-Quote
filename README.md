@@ -36,17 +36,25 @@ Toggle **Exa** off in the workspace header to see the same job with every Exa co
 
 ## Structure
 
-- `frontend/` — Next.js app, Exa API routes (`/api/parse`, `/api/discover`, `/api/source`).
-- `backend/` — holds `.env` only; reserved for the LiveKit voice agent.
+A single Next.js app. The Exa work runs in route handlers (`app/api/parse`, `app/api/discover`,
+`app/api/source`), which deploy as serverless functions — there is no separate backend to run.
+
+- `app/` — pages and the Exa API routes.
+- `lib/` — trade packs, quote maths, server-only provider calls.
 
 ## Run it
 
 ```bash
-cd backend && cp .env.example .env   # fill in EXA_API_KEY and the LiveKit keys
+cp .env.example .env.local   # fill in EXA_API_KEY and the LiveKit keys
 ```
 
 ```bash
-cd frontend && npm install && npm run dev
+npm install && npm run dev
 ```
 
-The frontend reads `backend/.env` server-side; keys are never sent to the browser.
+Keys are read from the environment server-side and never reach the browser.
+
+## Deploy
+
+Deploys to Vercel with no configuration — import the repository, then set `EXA_API_KEY`,
+`LIVEKIT_URL`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in the project's environment variables.
