@@ -9,8 +9,10 @@ import type { ExaTrace, PipelineProgress, Routes } from "@/lib/job";
 const ROUTE_LABELS: [keyof Routes, string, string, string][] = [
   ["exact", "exact part request", "exact part requests", "product search"],
   ["registry", "description resolved before", "descriptions resolved before", "priced without researching again"],
-  ["tools", "named tool", "named tools", "supplier product pages"],
+  ["sourced", "item the technician named", "items the technician named", "product search"],
+  ["tools", "named item without a model", "named items without a model", "Exa finds one to buy"],
   ["ambiguous", "uncertain description", "uncertain descriptions", "Exa discovery"],
+  ["superseded", "item covered by another line", "items covered by another line", "not quoted twice"],
 ];
 export function ExaResearch({events,trace,busy,routes,onCancel}:{events:PipelineProgress[];trace:ExaTrace[];busy:boolean;routes:Routes|null;onCancel:()=>void}) {
  const last=events.at(-1);

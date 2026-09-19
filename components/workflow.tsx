@@ -41,8 +41,8 @@ export function Workflow({pack}:{pack:TradePack}) {
    await readEventStream(response,(event,payload)=>{
     if(c.signal.aborted)return;
     if(event==="job_parsed"){parsed=payload as ParsedJob;setJob(parsed);setHours(parsed.laborHours??0);setStage("researching");}
-    else if(event==="intent_routed"){const data=payload as Record<"exact"|"registry"|"tools"|"ambiguous",string[]|undefined>;
-     setRoutes({exact:data.exact?.length??0,registry:data.registry?.length??0,tools:data.tools?.length??0,ambiguous:data.ambiguous?.length??0});}
+    else if(event==="intent_routed"){const data=payload as Record<keyof Routes,string[]|undefined>;
+     setRoutes({exact:data.exact?.length??0,registry:data.registry?.length??0,sourced:data.sourced?.length??0,tools:data.tools?.length??0,ambiguous:data.ambiguous?.length??0,superseded:data.superseded?.length??0});}
     else if(event==="discovery_complete"){const found=payload as Discovery;setDiscovery(found);setTrace(found.trace||[]);setQuantities(statedQuantities(found,parsed));}
     else if(event==="product_search_started"){const data=payload as {partId:string;query:string};setSearches(s=>({...s,[data.partId]:{loading:true,sources:[],error:"",query:data.query}}));}
     else if(event==="supplier_results"){const data=payload as ProductSearchResult & {partId:string};setSearches(s=>({...s,[data.partId]:{loading:false,sources:data.sources,error:"",query:data.query}}));setTrace(t=>[...t,...data.trace]);}
@@ -84,6 +84,7 @@ export function Workflow({pack}:{pack:TradePack}) {
        onQuantity={(id,value)=>setQuantities(q=>({...q,[id]:value}))}
        onRemove={dropResolved} onRetry={findSources} busy={busy}
        faultLabel={id=>job.parts.find(p=>p.id===id)?.description||""}/>
+      {(discovery.superseded?.length??0)>0&&<div className="superseded-block"><strong>Already covered by another line</strong><ul>{discovery.superseded!.map(sup=><li key={sup.partId}><em>{job.parts.find(p=>p.id===sup.partId)?.description||sup.partId}</em> — {sup.reason}</li>)}</ul></div>}
       {discovery.unresolved.length>0&&<div className="unresolved-block"><strong>Not confirmed from the retrieved pages</strong><ul>{discovery.unresolved.map(u=><li key={u.partId}><em>{job.parts.find(p=>p.id===u.partId)?.description||u.partId}</em> — {u.reason}</li>)}</ul></div>}
       <button className="text-button add-part" onClick={research} disabled={busy}>↻ Research these parts again</button>
     </div>}</div></section>:<div className="workshop-empty"><Image src={pack.mascot} alt="" width={pack.mascotW} height={pack.mascotH} unoptimized/><div><h3>No after-hours replay session.</h3><p>Your note becomes an editable parts list. You check the sources and set the price.</p></div></div>}

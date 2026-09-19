@@ -1,5 +1,5 @@
-import type { Constraint, JobPart, PartIntent } from "./job";
-import { containsIdentifier, normalizeUnits } from "./sourcing";
+import type { Constraint, JobPart, PartIntent, Supersession } from "./job";
+import { containsIdentifier, normalizeUnits, partIdentifier } from "./sourcing";
 
 /**
  * A constraint means the same thing however many faults state it. Two items on one job that are both
@@ -32,11 +32,69 @@ export function normalizeIntent(value: unknown, note: string, part: Pick<JobPart
   const exactModel = text(data.exactModel,100);
   const uncertainty = /\b(?:maybe|might|possibly|suspect|unsure|unknown|not sure|last time|previous|work order says)\b/i.test(rawContext);
   const explicit = exactModel && containsIdentifier(note,exactModel) && containsIdentifier(rawContext,exactModel);
+  const list = (value: unknown, max: number) => Array.isArray(value) ? value.map(v=>text(v,200)).filter(Boolean).slice(0,max) : [];
+  // Superseded work is a decision the technician announced, so both halves must be present to record it.
+  const supersedes: Supersession[] = Array.isArray(data.supersedes)
+    ? data.supersedes.slice(0,6).flatMap(v => {
+        const entry = v && typeof v === "object" ? v as Record<string,unknown> : {};
+        const subject = text(entry.subject,150), reason = text(entry.reason,300);
+        return subject && reason ? [{ subject, reason }] : [];
+      })
+    : [];
   const constraints: Constraint[] = Array.isArray(data.constraints) ? data.constraints.slice(0,8).flatMap(c=>c && typeof c === "object" && text(c.field) && text(c.value) && noteGrounds(note,text(c.value)) ? [{field:text(c.field,60),value:text(c.value,100)}] : []) : [];
-  return { rawContext,manufacturer:text(data.manufacturer,100),fixture:text(data.fixture,150)||part.equipment,symptom:text(data.symptom,300),suspectedPart:text(data.suspectedPart,150),possibleFamily:text(data.possibleFamily,100),exactModel:explicit?exactModel:"",route:(text(data.route).toLowerCase().startsWith("exact") || /\b(?:order|replace with|replacement number is confirmed)\b/i.test(rawContext)) && explicit && !uncertainty ? "exact" : "ambiguous",constraints: dedupeConstraints(constraints) };
+  return { rawContext,manufacturer:text(data.manufacturer,100),fixture:text(data.fixture,150)||part.equipment,symptom:text(data.symptom,300),suspectedPart:text(data.suspectedPart,150),
+    // The subject is what gets searched for, so it falls back to the description rather than to the
+    // component that failed: a disposal whose motor has gone is sourced as a disposal.
+    subject:text(data.subject,200)||part.description,failureCause:text(data.failureCause,300),ruledOut:list(data.ruledOut,8),supersedes,
+    possibleFamily:text(data.possibleFamily,100),exactModel:explicit?exactModel:"",route:(text(data.route).toLowerCase().startsWith("exact") || /\b(?:order|replace with|replacement number is confirmed)\b/i.test(rawContext)) && explicit && !uncertainty ? "exact" : "ambiguous",constraints: dedupeConstraints(constraints) };
 }
 
 export function exactCandidate(part: JobPart) {
   const model = part.intent?.exactModel || part.sku;
   return {id:`exact-${part.id}`,partIds:[part.id],name:[part.intent?.manufacturer,model,part.intent?.suspectedPart].filter(Boolean).join(" ")||part.description,manufacturer:part.intent?.manufacturer||"",partNumber:model,sku:part.sku,reason:"This part number was explicitly requested in the note. Exa will check supplier pages for the same product; fit still needs your review.",evidence:part.intent?.rawContext||part.description,verified:false,sourceUrl:"",sourceLabel:"Technician note",supporting:[],searchQuery:[part.intent?.manufacturer,model,part.intent?.suspectedPart].filter(Boolean).join(" "),route:"exact" as const,confidence:"high" as const,constraints:part.intent?.constraints||[],conflicts:[],questions:[]};
+}
+
+/**
+ * Whether this item can go straight to supplier pricing.
+ *
+ * The price gate accepts nothing it cannot tie to an identifier on the page, so "identifiable enough
+ * for direct retrieval" means an identifier exists: the replacement number the technician gave, a
+ * cited order number, or a designation inside the procurement subject ("Badger 5" out of
+ * "InSinkErator Badger 5 Model 5-87A"). Without one the item needs researching first, which is why a
+ * named tool with no model number still goes to discovery.
+ */
+export function groundedIdentifier(part: JobPart) {
+  return part.intent?.exactModel || part.sku || partIdentifier(part.intent?.subject ?? "") || "";
+}
+
+/** A line item the technician has already identified: priced directly, never diagnosed. */
+export function subjectCandidate(part: JobPart) {
+  const identifier = groundedIdentifier(part);
+  const subject = part.intent?.subject || part.description;
+  const sourcing = part.kind === "tool" ? "The technician asked for this tool by name, so it is priced rather than researched."
+    : part.kind === "unit" ? "The technician chose to replace the whole unit, so this is sourced as equipment rather than diagnosed as a fault."
+    : "The technician named what to source, so it is priced rather than researched.";
+  return {id:`sourced-${part.id}`,partIds:[part.id],name:subject,manufacturer:part.intent?.manufacturer||"",
+    partNumber:part.sku||identifier,sku:part.sku,reason:`${sourcing} Exa is checking supplier pages for it now; fit still needs your review.`,
+    evidence:part.intent?.rawContext||part.description,verified:false,sourceUrl:"",sourceLabel:"Technician note",supporting:[],
+    searchQuery:[part.intent?.manufacturer,subject].filter(Boolean).join(" ").replace(/\s+/g," ").trim(),
+    route:"exact" as const,confidence:"high" as const,
+    constraints:part.intent?.constraints||[],conflicts:[],questions:[]};
+}
+
+const WORK_NOISE = new Set(["the","a","an","of","for","in","on","inside","its","this","that","new","old","replacement","replace","repair","unit","assembly","whole"]);
+const workTokens = (value: string) => new Set(String(value).toLowerCase().replace(/[^a-z0-9]+/g," ").split(" ").filter(w => w.length > 2 && !WORK_NOISE.has(w)));
+/**
+ * Whether two descriptions name the same work.
+ *
+ * A technician writes the same repair two ways in one note: "motor inside disposal" where they report
+ * it, "disposal motor" where they rule it out. Matching has to be loose enough to join those and tight
+ * enough not to join "disposal motor" with "disposal unit", so it compares the identifying words and
+ * asks that most of the shorter description be present in the longer.
+ */
+export function describesSameWork(a: string, b: string) {
+  const left = workTokens(a), right = workTokens(b);
+  if (!left.size || !right.size) return false;
+  const [small, large] = left.size <= right.size ? [left, right] : [right, left];
+  return [...small].filter(t => large.has(t)).length / small.size >= 0.6;
 }

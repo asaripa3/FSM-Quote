@@ -1,6 +1,11 @@
 export type JobSettings = { company: string; laborRate: number; markupPercent: number; supplierDomains: string; region: string; preferredDomains?: string };
-/** kind separates what is being replaced from what the technician needs in hand to do the work. */
-export type JobPart = { id: string; description: string; quantity: number; sku: string; equipment: string; kind?: "part" | "tool"; intent?: PartIntent };
+/**
+ * What class of purchase this line item is. The distinction is procurement, not mechanics: a failed
+ * motor inside a disposal the technician has decided to replace whole is not a `part` to source, it
+ * is a `unit`, and the thing to source is the appliance on the equipment plate.
+ */
+export type PurchaseKind = "part" | "unit" | "tool" | "consumable";
+export type JobPart = { id: string; description: string; quantity: number; sku: string; equipment: string; kind?: PurchaseKind; intent?: PartIntent };
 /** laborHours is the midpoint used for arithmetic; laborRange is what the technician actually said. */
 export type ParsedJob = { summary: string; equipment: string; laborHours: number | null; laborRange?: { min: number; max: number } | null; parts: JobPart[]; questions: string[]; rawNote?: string };
 export type SourceOption = { title: string; supplier: string; url: string; domain: string; price: number | null; currency: string; priceEvidence: string; sku: string; availability: string; image: string; retrievedAt: string; priceStatus?: "page-extracted" | "cached-page" | "needs-review"; currencyAssumed?: boolean; packQuantity?: number | null; packEvidence?: string; identityEvidence?: string; contentHash?: string; matchStatus?: "exact" | "needs-review" | "rejected"; conflicts?: string[]; missingChecks?: string[]; rankReason?: string; availabilityEvidence?: string };
@@ -27,7 +32,7 @@ export type ResolvedPart = {
 };
 /** One Exa call, recorded so the interface can show exactly what was asked of Exa and what it cost. */
 export type ExaTrace = { step: string; endpoint: string; query: string; searchType: string; results: number; costDollars: number | null; ms: number; requestId?: string };
-export type Discovery = { parts: ResolvedPart[]; unresolved: { partId: string; reason: string }[]; pagesScanned: number; trace: ExaTrace[] };
+export type Discovery = { parts: ResolvedPart[]; unresolved: { partId: string; reason: string }[]; superseded?: { partId: string; reason: string }[]; pagesScanned: number; trace: ExaTrace[] };
 export type PickedSource = { source: SourceOption; price: number; confirmed: boolean };
 export const validAmount = (value: number, max = 100000) => Number.isFinite(value) && value >= 0 && value <= max;
 
@@ -46,19 +51,31 @@ export function statedQuantities(discovery: Discovery, job: ParsedJob | null): R
 }
 
 export type Constraint = { field: string; value: string };
+/** Work this item replaces, so the same repair is not quoted twice under two descriptions. */
+export type Supersession = { subject: string; reason: string };
 export type PartIntent = {
   rawContext: string;
   manufacturer: string;
   fixture: string;
   symptom: string;
+  /** What the technician concluded had failed. Not necessarily what they intend to buy. */
   suspectedPart: string;
+  /**
+   * What the technician intends to source. For a whole-unit replacement that is the equipment on the
+   * plate, not the component that failed inside it. This single field is what the search is built on.
+   */
+  subject: string;
+  failureCause: string;
+  /** What the technician explicitly excluded, so it is never quoted back to them. */
+  ruledOut: string[];
+  supersedes: Supersession[];
   possibleFamily: string;
   exactModel: string;
   route: "exact" | "ambiguous";
   constraints: Constraint[];
 };
 /** How many reported items went to each of the pipeline's four destinations. */
-export type Routes = { exact: number; registry: number; tools: number; ambiguous: number };
+export type Routes = { exact: number; registry: number; sourced: number; tools: number; ambiguous: number; superseded: number };
 export type PipelineStage = "understanding_input" | "resolving_part" | "searching_products" | "validating_results" | "comparing_suppliers" | "complete";
 export type PipelineProgress = { stage: PipelineStage; message: string; partId?: string; query?: string; at: string };
 export type ProductSearchResult = { query: string; sources: SourceOption[]; trace: ExaTrace[] };
@@ -77,6 +94,8 @@ export function uncoveredWork(job: ParsedJob | null, discovery: Discovery | null
   const covered = new Set((discovery?.parts ?? []).filter(r => isPicked(r.id)).flatMap(r => r.partIds));
   return job.parts.filter(p => !covered.has(p.id)).map(p => ({
     label: p.description,
-    reason: discovery?.unresolved.find(u => u.partId === p.id)?.reason ?? "No supplier option was selected for this item.",
+    reason: discovery?.superseded?.find(s => s.partId === p.id)?.reason
+      ?? discovery?.unresolved.find(u => u.partId === p.id)?.reason
+      ?? "No supplier option was selected for this item.",
   }));
 }

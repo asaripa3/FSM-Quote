@@ -13,11 +13,11 @@ const part={id:'part-1',description:'replacement cartridge',query:'Moen 1222 car
 const supplier='https://supplier.example/moen-1222';
 const text='Moen 1222 cartridge. Price USD $41.98 each. Sold as one unit. In stock.';
 const summary={price:41.98,currency:'USD',priceEvidence:'Price USD $41.98 each.',sku:'1222',availability:'In stock',availabilityEvidence:'In stock.',packQuantity:1,packEvidence:'Sold as one unit.',identityEvidence:'Moen 1222 cartridge.',matchesRequestedPart:true,specifications:[]};
-function mockFetch(t,{ambiguous=false,failContents=false}={}){
+function mockFetch(t,{ambiguous=false,failContents=false,parts=null,equipment='Moen shower'}={}){
  const calls=[];const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
  globalThis.fetch=async(url,init)=>{
   const body=JSON.parse(init.body);calls.push({url:String(url),body});
-  if(String(url).includes('chat/completions'))return reply({choices:[{message:{content:JSON.stringify({summary:'Shower repair',equipment:'Moen shower',laborHours:.75,parts:[ambiguous?{...part,sku:'',intent:{...intent,exactModel:'',route:'ambiguous',confidence:.6,rawContext:'Older Moen single handle shower drips; cartridge model unknown.'}}:part],questions:[]})}}]});
+  if(String(url).includes('chat/completions'))return reply({choices:[{message:{content:JSON.stringify({summary:'Shower repair',equipment,laborHours:.75,parts:parts??[ambiguous?{...part,sku:'',intent:{...intent,exactModel:'',route:'ambiguous',confidence:.6,rawContext:'Older Moen single handle shower drips; cartridge model unknown.'}}:part],questions:[]})}}]});
   if(String(url).endsWith('/search')&&!body.category)return reply({requestId:'discover',results:[{url:'https://manufacturer.example/cartridge',text:'Moen 1222 cartridge is a Posi-Temp replacement cartridge.',title:'Moen cartridge guide'}],output:{content:{parts:[{name:'Moen 1222 cartridge',manufacturer:'Moen',partNumber:'1222',sku:'',coversFaults:['part-1'],reason:'Candidate only. Check the valve family.',evidence:'Moen 1222 cartridge is a Posi-Temp replacement cartridge.',conflicts:[],questions:['Is this a Posi-Temp valve?']}]},grounding:[{field:'parts[0].name',confidence:'high',citations:[{url:'https://manufacturer.example/cartridge'}]}]},costDollars:{total:.01}});
   if(String(url).endsWith('/search'))return reply({requestId:'product',results:[{url:supplier,title:'Moen 1222 cartridge'}],costDollars:{total:.005}});
   if(String(url).endsWith('/contents')){if(failContents)return reply({results:[],statuses:[{id:supplier,status:'error'}]});return reply({requestId:'contents',results:[{url:supplier,text,summary:JSON.stringify(summary)}],statuses:[{id:supplier,status:'success',source:'live'}],costDollars:{total:.005}});}
@@ -41,7 +41,7 @@ test('exact path streams real product retrieval and Exa extraction without disco
  // Cache-first: forcing a live crawl returned nothing on the big retailers and cost ~18s per run.
  assert.equal(contents.maxAgeHours,undefined);assert.ok(contents.summary.schema);
  // A stated part number routes straight to product search: no discovery, and no registry reuse either.
- assert.deepEqual(events.find(e=>e.event==='intent_routed').data,{exact:['part-1'],registry:[],tools:[],ambiguous:[]});
+ assert.deepEqual(events.find(e=>e.event==='intent_routed').data,{exact:['part-1'],registry:[],sourced:[],tools:[],ambiguous:[],superseded:[]});
  const result=events.find(e=>e.event==='supplier_results').data;
  assert.equal(result.sources[0].price,41.98);assert.equal(result.sources[0].url,supplier);assert.equal(result.sources[0].packQuantity,1);
  for(const stage of ['understanding_input','searching_products','validating_results','comparing_suppliers','complete'])assert.ok(events.some(e=>e.event===stage));
@@ -232,4 +232,91 @@ test('excluded work reaches the printed estimate and paginates with it', async (
   assert.equal((await build(3,Array.from({length:8},(_,i)=>({...long,label:`item ${i+1}`})))).getPageCount(), 2);
   // Nothing excluded means no section and no extra page.
   assert.equal((await build(3,[])).getPageCount(), 1);
+});
+
+test('the procurement subject is what gets sourced, not what failed', async () => {
+  const { normalizeIntent, groundedIdentifier, subjectCandidate } = await import('../lib/intent.ts');
+  const note = 'Equipment plate says this is an InSinkErator Badger 5, Model 5-87A, 1/2 horsepower. The motor inside the disposal has most likely failed, so I would replace the disposal unit rather than try to repair the motor.';
+  const raw = {rawContext:'replace the disposal unit rather than try to repair the motor',manufacturer:'InSinkErator',
+    fixture:'garbage disposal',symptom:'motor not responding',suspectedPart:'motor inside disposal',
+    subject:'InSinkErator Badger 5 Model 5-87A',failureCause:'internal motor failure',
+    ruledOut:['motor repair','wiring repair','flange replacement'],
+    supersedes:[{subject:'disposal motor',reason:'technician explicitly chose whole-unit replacement instead of motor repair'}],
+    possibleFamily:'',exactModel:'',route:'ambiguous',constraints:[]};
+  const part = {id:'part-1',description:'Replacement garbage disposal compatible with InSinkErator Badger 5, Model 5-87A',
+    quantity:1,sku:'',equipment:'InSinkErator Badger 5, Model 5-87A',kind:'unit'};
+  const intent = normalizeIntent(raw, note, part);
+
+  // The motor is what failed; the disposal is what gets bought. Searching for the first found nothing.
+  assert.equal(intent.suspectedPart, 'motor inside disposal');
+  assert.equal(intent.subject, 'InSinkErator Badger 5 Model 5-87A');
+  assert.deepEqual(intent.ruledOut, ['motor repair','wiring repair','flange replacement']);
+  assert.equal(intent.supersedes[0].subject, 'disposal motor');
+
+  // A designation inside the subject is enough to price against, so this skips discovery entirely.
+  const withIntent = {...part, intent};
+  assert.equal(groundedIdentifier(withIntent), 'Badger 5');
+  const candidate = subjectCandidate(withIntent);
+  assert.equal(candidate.partNumber, 'Badger 5');
+  assert.match(candidate.searchQuery, /InSinkErator Badger 5 Model 5-87A/);
+
+  // A tool named without any model number still has nothing to price against, so it still gets researched.
+  const puller = {id:'part-2',description:'Moen cartridge puller',quantity:1,sku:'',equipment:'Moen shower valve',kind:'tool',
+    intent:{...raw,subject:'Moen cartridge puller',supersedes:[],ruledOut:[]}};
+  assert.equal(groundedIdentifier(puller), '');
+
+  // A supersession only holds when the model gave both halves of it.
+  const half = normalizeIntent({...raw, supersedes:[{subject:'disposal motor'},{reason:'no subject'}]}, note, part);
+  assert.equal(half.supersedes.length, 0);
+});
+
+test('work another line replaces is not quoted twice', async () => {
+  const { describesSameWork } = await import('../lib/intent.ts');
+  // The same repair, written two ways in one note: reported one way, ruled out another.
+  assert.ok(describesSameWork('disposal motor', 'motor inside disposal'));
+  assert.ok(describesSameWork('heat exchanger', 'cracked heat exchanger on the furnace'));
+  assert.ok(describesSameWork('the replacement motor assembly', 'motor'));
+  // Close wording that is genuinely different work must not collapse.
+  assert.equal(describesSameWork('disposal motor', 'disposal flange'), false);
+  assert.equal(describesSameWork('condenser fan motor', 'condenser coil'), false);
+  assert.equal(describesSameWork('', 'motor'), false);
+});
+
+
+test('a whole-unit replacement is sourced directly and its failed component is not quoted twice', async t => {
+  // The note the app used to answer with nothing: the motor failed, the technician replaces the
+  // appliance. The extraction calls the line item a "part" because that is how the line reads.
+  const disposalIntent = {rawContext:'replace the disposal unit rather than try to repair the motor',
+    manufacturer:'InSinkErator',fixture:'garbage disposal',symptom:'motor not responding',
+    suspectedPart:'motor inside the disposal',subject:'InSinkErator Badger 5, Model 5-87A',
+    failureCause:'internal motor failure',ruledOut:['motor repair'],supersedes:[],
+    possibleFamily:'',exactModel:'',route:'ambiguous',constraints:[]};
+  const disposal = {id:'part-1',description:'Replacement garbage disposal compatible with InSinkErator Badger 5',
+    quantity:1,sku:'',equipment:'InSinkErator Badger 5, Model 5-87A',kind:'part',intent:disposalIntent};
+  const motor = {id:'part-2',description:'motor inside the disposal',quantity:1,sku:'',
+    equipment:'InSinkErator Badger 5, Model 5-87A',kind:'part',
+    intent:{...disposalIntent,subject:'disposal motor',suspectedPart:'disposal motor',supersedes:[]}};
+
+  const calls = mockFetch(t, {parts:[disposal,motor], equipment:'InSinkErator Badger 5, Model 5-87A'});
+  const events = await run('Motor inside the InSinkErator Badger 5, Model 5-87A has failed. Replace the disposal unit rather than repair the motor.');
+  const routed = events.find(e => e.event === 'intent_routed').data;
+
+  // What the technician intends to source is the equipment itself, so this is a unit replacement and
+  // the designation inside the subject is enough to price against: no discovery call at all.
+  assert.deepEqual(routed.sourced, ['part-1']);
+  assert.deepEqual(routed.ambiguous, []);
+  assert.equal(calls.filter(c => c.url.endsWith('/search') && !c.body.category).length, 0, 'no discovery search');
+
+  // Replacing the whole disposal covers its motor, so the motor is not researched, priced or quoted.
+  assert.deepEqual(routed.superseded, ['part-2']);
+  const discovery = events.find(e => e.event === 'discovery_complete').data;
+  assert.equal(discovery.superseded.length, 1);
+  assert.match(discovery.superseded[0].reason, /Covered by replacing/);
+  assert.ok(!discovery.parts.some(r => r.partIds.includes('part-2')));
+  assert.ok(!discovery.unresolved.some(u => u.partId === 'part-2'), 'superseded work is not reported as unresolved');
+
+  // The search Exa receives is the appliance, not the component that failed.
+  const product = calls.find(c => c.url.endsWith('/search') && c.body.category === 'product');
+  assert.match(product.body.query, /Badger 5/);
+  assert.ok(!/motor/i.test(product.body.query), 'the failed component is not what gets searched');
 });
