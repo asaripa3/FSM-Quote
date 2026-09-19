@@ -97,9 +97,6 @@ export type TradePack = {
   demo: {
     customer: string;
     site: string;
-    note: string;
-    equipment: { manufacturer: string; model: string; category: string };
-    symptoms: string[];
     laborHours: number;
     parts: Part[];
   };
@@ -142,13 +139,6 @@ export const TRADES: Record<TradeId, TradePack> = {
     demo: {
       customer: "Marriott Downtown",
       site: "Men's restroom — 2nd floor",
-      note: "Men's restroom, second floor. Sloan Royal 111 water closet keeps running after flush — the diaphragm looks worn and the vacuum breaker sleeve is cracked. The Regal urinal beside it is weeping at the diaphragm too. Replace both. Work order says we ordered 3301150 for the closet last time. About 45 minutes labor.",
-      equipment: { manufacturer: "Sloan", model: "Royal 111", category: "Exposed water closet flushometer, 1.6 gpf" },
-      symptoms: [
-        "Water closet runs continuously after flush",
-        "Closet diaphragm worn, vacuum breaker sleeve cracked",
-        "Urinal weeping at the diaphragm",
-      ],
       laborHours: 0.75,
       parts: [
         {
@@ -239,9 +229,6 @@ export const TRADES: Record<TradeId, TradePack> = {
     demo: {
       customer: "Northside Medical Plaza",
       site: "Rooftop unit RTU-3",
-      note: "Carrier rooftop unit. Condenser fan isn't starting. Capacitor is swollen. 45/5 microfarad, 440 volt. Need replacement and about an hour labor.",
-      equipment: { manufacturer: "Carrier", model: "48TC Rooftop Unit", category: "Packaged rooftop unit" },
-      symptoms: ["Condenser fan will not start", "Run capacitor swollen / failed"],
       laborHours: 1.0,
       parts: [
         {
@@ -305,9 +292,6 @@ export const TRADES: Record<TradeId, TradePack> = {
     demo: {
       customer: "Harborview Office Park",
       site: "Suite 210 — main load center",
-      note: "Square D QO panel. Customer needs another 20 amp double-pole circuit for the condenser. Need compatible breaker and about an hour and a half.",
-      equipment: { manufacturer: "Square D", model: "QO Load Center", category: "Panelboard" },
-      symptoms: ["Additional 20A 2-pole circuit required for condenser"],
       laborHours: 1.5,
       parts: [
         {

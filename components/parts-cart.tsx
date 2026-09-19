@@ -37,7 +37,7 @@ function Offer({ source, part, picked, quantity, onPick, onQuantity }: {
       <td className="cart-product">
         <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title} ↗</a>
         <span className="cart-supplier">{source.domain}{source.sku ? ` · SKU ${source.sku}` : ""}</span>
-        <span className="cart-match" data-status={source.matchStatus}>{source.matchStatus==="exact"?"Exact identifier":source.matchStatus==="rejected"?"Conflicting specification":"Check identity & fit"}</span><span className="cart-note">{source.priceEvidence}</span>{source.conflicts?.map(conflict=><span className="cart-conflict" key={conflict}>{conflict}</span>)}{source.missingChecks?.map(check=><span className="cart-note" key={check}>{check}</span>)}<span className="cart-note">{source.rankReason}</span><span className="cart-note">{source.availability} · Retrieved {new Date(source.retrievedAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span>
+        <span className="cart-match" data-status={source.matchStatus}>{source.matchStatus==="exact"?"Exact identifier":source.matchStatus==="rejected"?"Conflicting specification":"Check identity & fit"}</span><span className="cart-note">{source.priceEvidence}</span>{source.conflicts?.map(conflict=><span className="cart-conflict" key={conflict}>{conflict}</span>)}{source.missingChecks?.map(check=><span className="cart-note" key={check}>{check}</span>)}
         {source.identityEvidence && <span className="cart-note">Page identifies: {source.identityEvidence}</span>}
       </td>
       <td className="cart-price">
