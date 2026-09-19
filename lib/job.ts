@@ -4,7 +4,7 @@ export type JobSettings = { company: string; laborRate: number; markupPercent: n
  * motor inside a disposal the technician has decided to replace whole is not a `part` to source, it
  * is a `unit`, and the thing to source is the appliance on the equipment plate.
  */
-export type PurchaseKind = "part" | "unit" | "tool" | "consumable";
+export type PurchaseKind = "part" | "unit" | "tool";
 export type JobPart = { id: string; description: string; quantity: number; sku: string; equipment: string; kind?: PurchaseKind; intent?: PartIntent };
 /** laborHours is the midpoint used for arithmetic; laborRange is what the technician actually said. */
 export type ParsedJob = { summary: string; equipment: string; laborHours: number | null; laborRange?: { min: number; max: number } | null; parts: JobPart[]; questions: string[]; rawNote?: string };
@@ -57,7 +57,6 @@ export type PartIntent = {
   rawContext: string;
   manufacturer: string;
   fixture: string;
-  symptom: string;
   /** What the technician concluded had failed. Not necessarily what they intend to buy. */
   suspectedPart: string;
   /**
@@ -65,11 +64,12 @@ export type PartIntent = {
    * plate, not the component that failed inside it. This single field is what the search is built on.
    */
   subject: string;
-  failureCause: string;
-  /** What the technician explicitly excluded, so it is never quoted back to them. */
+  /**
+   * What the technician explicitly excluded. Measured as the steadiest judgement the extraction makes,
+   * so it decides whether a purchase is a whole unit as well as what not to quote back to them.
+   */
   ruledOut: string[];
   supersedes: Supersession[];
-  possibleFamily: string;
   exactModel: string;
   route: "exact" | "ambiguous";
   constraints: Constraint[];

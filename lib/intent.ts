@@ -46,11 +46,11 @@ export function normalizeIntent(value: unknown, note: string, part: Pick<JobPart
       })
     : [];
   const constraints: Constraint[] = Array.isArray(data.constraints) ? data.constraints.slice(0,8).flatMap(c=>c && typeof c === "object" && text(c.field) && text(c.value) && noteGrounds(note,text(c.value)) ? [{field:text(c.field,60),value:text(c.value,100)}] : []) : [];
-  return { rawContext,manufacturer:maker,fixture:text(data.fixture,150)||part.equipment,symptom:text(data.symptom,300),suspectedPart:text(data.suspectedPart,150),
+  return { rawContext,manufacturer:maker,fixture:text(data.fixture,150)||part.equipment,suspectedPart:text(data.suspectedPart,150),
     // The subject is what gets searched for, so it falls back to the description rather than to the
     // component that failed: a disposal whose motor has gone is sourced as a disposal.
-    subject:text(data.subject,200)||part.description,failureCause:text(data.failureCause,300),ruledOut:list(data.ruledOut,8),supersedes,
-    possibleFamily:text(data.possibleFamily,100),exactModel:explicit?exactModel:"",route:(text(data.route).toLowerCase().startsWith("exact") || /\b(?:order|replace with|replacement number is confirmed)\b/i.test(rawContext)) && explicit && !uncertainty ? "exact" : "ambiguous",constraints: dedupeConstraints(constraints) };
+    subject:text(data.subject,200)||part.description,ruledOut:list(data.ruledOut,8),supersedes,
+    exactModel:explicit?exactModel:"",route:(text(data.route).toLowerCase().startsWith("exact") || /\b(?:order|replace with|replacement number is confirmed)\b/i.test(rawContext)) && explicit && !uncertainty ? "exact" : "ambiguous",constraints: dedupeConstraints(constraints) };
 }
 
 export function exactCandidate(part: JobPart) {

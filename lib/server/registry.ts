@@ -49,9 +49,26 @@ const NOISE = new Set(["the","and","for","with","a","an","of","in","on","is","it
  * under "Sloan Valve Company" could never be read back by a note that says "Sloan", so both sides use
  * the parsed intent and nothing else. Exported so the seed is generated with this exact function.
  */
-export function registryKey(trade: string, fixture: string, suspectedPart: string, manufacturer: string) {
-  const words = [...new Set(`${manufacturer} ${fixture} ${suspectedPart}`.split(/\s+/).map(strip).filter(w => w && !NOISE.has(w)))].sort();
+export function registryKey(trade: string, subject: string, context: string, manufacturer: string) {
+  const words = [...new Set(`${manufacturer} ${subject} ${context}`.split(/\s+/).map(strip).filter(w => w && !NOISE.has(w)))].sort();
   return `${strip(trade)}::${words.join("-")}`;
+}
+
+/**
+ * What a job is filed under: the thing being sourced, described against the equipment it belongs to.
+ *
+ * The subject is used in preference to the component that failed, because for a whole-unit replacement
+ * those are different things. A disposal the technician is replacing because its motor died would
+ * otherwise be filed under "motor", and answer the next note that mentions a disposal motor with the
+ * appliance, which is exactly the confusion the unit route exists to remove. Notes parsed before the
+ * subject existed fall back to the failed component, which is what they were always keyed on.
+ */
+function descriptorFor(part: JobPart) {
+  return {
+    subject: part.intent?.subject || part.intent?.suspectedPart || part.description,
+    context: part.intent?.fixture || part.equipment,
+    manufacturer: part.intent?.manufacturer || "",
+  };
 }
 
 /** Records shipped with the app: resolutions already confirmed against manufacturer documentation. */
@@ -79,8 +96,8 @@ const isStale = (record: RegistryRecord) =>
   Date.now() - Date.parse(record.lastVerifiedAt) > STALE_AFTER_DAYS * 86_400_000;
 
 /** The words a description is identified by, with trade filler removed. */
-export function descriptorTokens(fixture: string, suspectedPart: string, manufacturer: string) {
-  return new Set(`${manufacturer} ${fixture} ${suspectedPart}`.split(/\s+/).map(strip).filter(w => w && !NOISE.has(w)));
+export function descriptorTokens(subject: string, context: string, manufacturer: string) {
+  return new Set(`${manufacturer} ${subject} ${context}`.split(/\s+/).map(strip).filter(w => w && !NOISE.has(w)));
 }
 
 /**
@@ -90,7 +107,8 @@ export function descriptorTokens(fixture: string, suspectedPart: string, manufac
  * and where a manufacturer is named on both sides it has to be the same one.
  */
 const MIN_OVERLAP = 0.6;
-function bestMatch(records: Iterable<RegistryRecord>, trade: string, wanted: Set<string>, manufacturer: string) {
+const share = (wanted: Set<string>, known: Set<string>) => [...wanted].filter(w => known.has(w)).length / wanted.size;
+function bestMatch(records: Iterable<RegistryRecord>, trade: string, wanted: Set<string>, subject: Set<string>, manufacturer: string) {
   if (wanted.size < 2) return null;
   let best: RegistryRecord | null = null, bestScore = 0;
   for (const record of records) {
@@ -99,7 +117,11 @@ function bestMatch(records: Iterable<RegistryRecord>, trade: string, wanted: Set
     const maker = strip(manufacturer);
     // A named manufacturer that the record does not share is a different product line, not a variant.
     if (maker && ![...known].some(k => k === maker || k.startsWith(maker) || maker.startsWith(k))) continue;
-    const overlap = [...wanted].filter(w => known.has(w)).length / wanted.size;
+    // The equipment words alone must not carry a match. A note asking for a disposal motor shares
+    // "kitchen sink garbage disposal" with a record for the whole appliance and would score well on
+    // the combined set, so what is being sourced has to agree on its own terms as well.
+    if (subject.size && share(subject, known) < MIN_OVERLAP) continue;
+    const overlap = share(wanted, known);
     if (overlap >= MIN_OVERLAP && overlap > bestScore) { best = record; bestScore = overlap; }
   }
   return best;
@@ -124,12 +146,13 @@ function answersDesignation(record: RegistryRecord, stated: string[]) {
 
 export async function lookupPart(trade: string, part: JobPart): Promise<RegistryRecord | null> {
   const intent = part.intent;
-  const fixture = intent?.fixture || part.equipment, suspected = intent?.suspectedPart || part.description;
-  const key = registryKey(trade, fixture, suspected, intent?.manufacturer || "");
-  const wanted = descriptorTokens(fixture, suspected, intent?.manufacturer || "");
+  const { subject, context, manufacturer } = descriptorFor(part);
+  const key = registryKey(trade, subject, context, manufacturer);
+  const wanted = descriptorTokens(subject, context, manufacturer);
+  const wantedSubject = descriptorTokens(subject, "", "");
   const record = learned.get(key) ?? (await seed()).get(key)
-    ?? bestMatch(learned.values(), trade, wanted, intent?.manufacturer || "")
-    ?? bestMatch((await seed()).values(), trade, wanted, intent?.manufacturer || "");
+    ?? bestMatch(learned.values(), trade, wanted, wantedSubject, manufacturer)
+    ?? bestMatch((await seed()).values(), trade, wanted, wantedSubject, manufacturer);
   if (!record || isStale(record)) return null;
   // The replacement number the technician gave, if they gave one, settles which part this is.
   const stated = [intent?.exactModel, part.sku].map(v => strip(String(v ?? ""))).filter(Boolean);
@@ -171,10 +194,10 @@ export function rememberPart(trade: string, part: JobPart, resolved: ResolvedPar
   if (!resolved.verified || !resolved.partNumber || resolved.confidence !== "high") return;
   // An open question or a recorded conflict is exactly the uncertainty a cached hit would erase.
   if (!sole || resolved.questions?.length || resolved.conflicts?.length) return;
-  const intent = part.intent;
   // The technician's manufacturer wording, not the resolved legal name, or the write cannot be read back.
-  const key = registryKey(trade, intent?.fixture || part.equipment, intent?.suspectedPart || part.description, intent?.manufacturer || "");
-  const alias = `${intent?.fixture || part.equipment} ${intent?.suspectedPart || part.description}`.trim();
+  const { subject, context, manufacturer } = descriptorFor(part);
+  const key = registryKey(trade, subject, context, manufacturer);
+  const alias = `${subject} ${context}`.trim();
   const existing = learned.get(key);
   learned.set(key, {
     canonicalPartId: key, trade,

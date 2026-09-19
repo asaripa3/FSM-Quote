@@ -320,3 +320,32 @@ test('a whole-unit replacement is sourced directly and its failed component is n
   assert.match(product.body.query, /Badger 5/);
   assert.ok(!/motor/i.test(product.body.query), 'the failed component is not what gets searched');
 });
+
+test('a unit replacement is filed under the equipment, not the component that failed', async () => {
+  const { registryKey, rememberPart, lookupPart } = await import('../lib/server/registry.ts');
+  const base = {rawContext:'replace the disposal unit rather than repair the motor',manufacturer:'InSinkErator',
+    fixture:'kitchen sink garbage disposal',ruledOut:['motor repair'],supersedes:[],exactModel:'',route:'ambiguous',constraints:[]};
+  const disposal = {id:'part-1',description:'Replacement garbage disposal',quantity:1,sku:'',kind:'unit',
+    equipment:'kitchen sink garbage disposal',
+    intent:{...base, suspectedPart:'motor', subject:'InSinkErator Badger 5, Model 5-87A'}};
+
+  // Keyed on what is being bought. Keying on the failed component would file an appliance under "motor".
+  const key = registryKey('plumbing','InSinkErator Badger 5, Model 5-87A','kitchen sink garbage disposal','InSinkErator');
+  assert.ok(key.includes('badger'));
+  assert.ok(!key.includes('motor'));
+
+  rememberPart('plumbing', disposal, {id:'r1',partIds:['part-1'],name:'InSinkErator Badger 5 Garbage Disposal',
+    manufacturer:'InSinkErator',partNumber:'Badger 5',sku:'',reason:'',evidence:'Badger 5 1/2 HP continuous feed disposal',
+    verified:true,sourceUrl:'https://insinkerator.example/badger-5',sourceLabel:'insinkerator.example',supporting:[],
+    searchQuery:'InSinkErator Badger 5',route:'ambiguous',confidence:'high',constraints:[],conflicts:[],questions:[]});
+
+  // The same job again gets the appliance back.
+  assert.equal((await lookupPart('plumbing', disposal))?.partNumber ?? (await lookupPart('plumbing', disposal))?.model, 'Badger 5');
+
+  // A different technician asking for a disposal motor must not be handed the whole appliance, even
+  // though both notes share every word of "kitchen sink garbage disposal".
+  const motorOnly = {id:'part-9',description:'disposal motor',quantity:1,sku:'',kind:'part',
+    equipment:'kitchen sink garbage disposal',
+    intent:{...base, ruledOut:[], suspectedPart:'disposal motor', subject:'disposal motor'}};
+  assert.equal(await lookupPart('plumbing', motorOnly), null);
+});
