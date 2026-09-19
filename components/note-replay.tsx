@@ -75,7 +75,7 @@ export function NoteReplay({ note, job, collapsed }: { note: string; job: Parsed
       </p>
       {!collapsed && total > 0 && (
         <p className="note-replay-count" role="status">
-          <span className="exa-tag">EXA</span> {Math.min(revealed, total)} of {total} details taken from your note
+          <span className="micro-label">YOUR NOTE</span> {Math.min(revealed, total)} of {total} details taken from your note
         </p>
       )}
     </div>

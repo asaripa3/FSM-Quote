@@ -26,18 +26,18 @@ function Offer({ source, part, picked, quantity, onPick, onQuantity }: {
   // The page price is carried into the estimate so ticking a row behaves like a cart. Where the pack size
   // is unknown or greater than one it may be a pack price, which the row says plainly and the estimator
   // confirms line by line before anything can be printed.
-  const startingPrice = source.price ?? 0;
+  const startingPrice = source.packQuantity===1 ? source.price ?? 0 : 0;
   return (
     <tr className={picked ? "cart-row picked" : "cart-row"}>
       <td className="cart-pick">
-        <input type="checkbox" checked={picked} aria-label={`Quote ${source.title} from ${source.domain}`}
+        <input type="checkbox" disabled={source.matchStatus==="rejected"} checked={picked} aria-label={`Quote ${source.title} from ${source.domain}`}
           onChange={e => onPick(e.target.checked ? { source, price: startingPrice, confirmed: false } : null)} />
       </td>
       <td><Thumb src={source.image} /></td>
       <td className="cart-product">
         <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title} ↗</a>
         <span className="cart-supplier">{source.domain}{source.sku ? ` · SKU ${source.sku}` : ""}</span>
-        <span className="cart-note">{source.priceEvidence}</span>
+        <span className="cart-match" data-status={source.matchStatus}>{source.matchStatus==="exact"?"Exact identifier":source.matchStatus==="rejected"?"Conflicting specification":"Check identity & fit"}</span><span className="cart-note">{source.priceEvidence}</span>{source.conflicts?.map(conflict=><span className="cart-conflict" key={conflict}>{conflict}</span>)}{source.missingChecks?.map(check=><span className="cart-note" key={check}>{check}</span>)}<span className="cart-note">{source.rankReason}</span><span className="cart-note">{source.availability} · Retrieved {new Date(source.retrievedAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</span>
         {source.identityEvidence && <span className="cart-note">Page identifies: {source.identityEvidence}</span>}
       </td>
       <td className="cart-price">
@@ -56,7 +56,7 @@ function Offer({ source, part, picked, quantity, onPick, onQuantity }: {
   );
 }
 
-export function PartsCart({ discovery, searches, picks, quantities, onPick, onQuantity, onRemove, faultLabel }: {
+export function PartsCart({ discovery, searches, picks, quantities, onPick, onQuantity, onRemove, onRetry, busy, faultLabel }: {
   discovery: Discovery;
   searches: Record<string, SearchState>;
   picks: Record<string, PickedSource>;
@@ -64,6 +64,8 @@ export function PartsCart({ discovery, searches, picks, quantities, onPick, onQu
   onPick: (partId: string, pick: PickedSource | null) => void;
   onQuantity: (partId: string, value: number) => void;
   onRemove: (partId: string) => void;
+  onRetry: (part: ResolvedPart) => void;
+  busy: boolean;
   faultLabel: (faultId: string) => string;
 }) {
   return (
@@ -76,11 +78,14 @@ export function PartsCart({ discovery, searches, picks, quantities, onPick, onQu
             <header>
               <div>
                 <span className="cart-index">ITEM {String(index + 1).padStart(2, "0")}</span>
-                <h3>{part.name}</h3>
+                <h3>{part.name}</h3><p className="cart-path">{part.route==="exact"?"Exact part from your note":"Candidate discovered by Exa"}{part.confidence?` · ${part.confidence} source confidence`:""}</p>
                 <p className="cart-ids">{[part.manufacturer, part.partNumber && `Part ${part.partNumber}`, part.sku && `SKU ${part.sku}`].filter(Boolean).join(" · ")}</p>
               </div>
-              <button className="text-button" onClick={() => onRemove(part.id)} disabled={search?.loading}>Remove</button>
+              <button className="text-button" onClick={() => onRemove(part.id)} disabled={busy||search?.loading}>Remove</button>
             </header>
+            {discovery.parts.some(other=>other.id!==part.id&&other.partIds.some(id=>part.partIds.includes(id)))&&<p className="candidate-choice">Alternative for the same repair. Choosing this replaces the other candidate in your estimate.</p>}
+            {part.conflicts?.map(c=><p className="cart-conflict" key={c}>Exa found a conflict: {c}</p>)}
+            {part.questions?.map(q=><p className="candidate-choice" key={q}>{q}</p>)}
             {part.partIds.length > 1 && (
               <p className="cart-covers">One kit covers {part.partIds.length} of the reported faults: {part.partIds.map(faultLabel).filter(Boolean).join("; ")}</p>
             )}
@@ -89,7 +94,7 @@ export function PartsCart({ discovery, searches, picks, quantities, onPick, onQu
               <p>{part.reason}</p>
               <blockquote>{part.evidence}</blockquote>
               <p className="cart-sources">
-                {(part.supporting.length ? part.supporting : [{ url: part.sourceUrl, label: part.sourceLabel }]).map((s, i) => (
+                {(part.supporting.length ? part.supporting : part.sourceUrl ? [{ url: part.sourceUrl, label: part.sourceLabel }] : []).map((s, i) => (
                   <span key={s.url}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noopener noreferrer">{s.label} ↗</a></span>
                 ))}
               </p>
@@ -101,10 +106,11 @@ export function PartsCart({ discovery, searches, picks, quantities, onPick, onQu
             {search && !search.loading && !search.error && search.sources.length === 0 && (
               <p className="empty-message">No supplier pages found. Widen your allowed suppliers in settings.</p>
             )}
+            {!busy&&!search?.loading&&<button className="text-button" onClick={()=>onRetry(part)}>↻ Refresh supplier prices</button>}
             {!!search?.sources.length && (
               <table className="cart-table">
                 <thead>
-                  <tr><th scope="col"><span className="sr-only">Quote</span></th><th scope="col"><span className="sr-only">Image</span></th><th scope="col">Supplier listing</th><th scope="col">Unit price</th><th scope="col">Qty</th></tr>
+                  <tr><th scope="col"><span className="sr-only">Quote</span></th><th scope="col"><span className="sr-only">Image</span></th><th scope="col">Supplier listing</th><th scope="col">Listed price</th><th scope="col">Qty</th></tr>
                 </thead>
                 <tbody>
                   {search.sources.map(source => (

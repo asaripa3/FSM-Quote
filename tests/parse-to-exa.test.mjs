@@ -131,7 +131,7 @@ test("a structured equipment field is read, not rejected as malformed", async (t
   // That is a fair reading of the note, and rejecting the whole parse over its shape loses a good one.
   const original = globalThis.fetch;
   t.after(() => { globalThis.fetch = original; });
-  globalThis.fetch = async (url, init) => {
+  globalThis.fetch = async (url) => {
     if (String(url).includes("agent-gateway.livekit.cloud/v1/chat/completions")) {
       const payload = llmPartsPayload();
       payload.equipment = { manufacturer: "Sloan", model: "Royal 111", fixture: "exposed water closet" };
