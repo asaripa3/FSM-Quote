@@ -113,3 +113,18 @@ export function partIdentifier(value: unknown) {
   }
   return "";
 }
+
+/**
+ * Compare a stated requirement with how a page (or a note) happens to word it.
+ *
+ * "120V", "120 V" and "120 volts" are one requirement. Collapsing the unit and the spacing is what
+ * lets a note's wording survive the model's rewording of it; without this the requirement is simply
+ * absent downstream, which reads as if the technician never stated it.
+ */
+export function normalizeUnits(value: string) {
+  return value.toLowerCase()
+    .replace(/\bvolts?\b/g, "v")
+    .replace(/\bgallons? per flush\b/g, "gpf")
+    .replace(/\binches?\b/g, '"')
+    .replace(/\s+/g, "");
+}

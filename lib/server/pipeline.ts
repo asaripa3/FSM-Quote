@@ -53,9 +53,13 @@ export async function runQuotePipeline(input: {trade:string;note:string;settings
   for(const p of job.parts) if(!represented.has(p.id)&&!unresolved.some(u=>u.partId===p.id)) unresolved.push({partId:p.id,reason:"This run's candidate limit was reached. Research this item separately."});
   discovery={...discovery,parts,unresolved};
   // Keep what Exa established, so the next job with this equipment and symptom skips discovery.
+  // Where a fault drew more than one candidate the choice is the technician's, not this run's: none of
+  // the alternatives is a conclusion yet, so nothing is written for that fault.
+  const candidatesPerFault=new Map<string,number>();
+  for(const resolved of parts) for(const id of resolved.partIds) candidatesPerFault.set(id,(candidatesPerFault.get(id)??0)+1);
   for(const resolved of discovery.parts) for(const id of resolved.partIds){
     const part=job.parts.find(p=>p.id===id);
-    if(part) rememberPart(input.trade,part,resolved);
+    if(part) rememberPart(input.trade,part,resolved,candidatesPerFault.get(id)===1);
   }
   emit("discovery_complete",discovery);
   let next=0,failed=0;

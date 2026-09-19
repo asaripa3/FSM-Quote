@@ -1,7 +1,5 @@
 import type { Constraint, SourceOption } from "./job";
-import { evidenceOnPage } from "./sourcing";
-
-const normalized = (v: string) => v.toLowerCase().replace(/\bvolts?\b/g,"v").replace(/\bgallons? per flush\b/g,"gpf").replace(/\binches?\b/g,'"').replace(/\s+/g,"");
+import { evidenceOnPage, normalizeUnits as normalized } from "./sourcing";
 export function checkSpecifications(constraints: Constraint[], specs: unknown, text: string) {
   const values = Array.isArray(specs) ? specs as {field?:string;value?:string;evidence?:string}[] : [];
   const conflicts: string[] = [], missing: string[] = [];

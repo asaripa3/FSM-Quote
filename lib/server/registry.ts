@@ -105,6 +105,23 @@ function bestMatch(records: Iterable<RegistryRecord>, trade: string, wanted: Set
   return best;
 }
 
+/**
+ * Whether a record can answer for the identifier the technician actually named.
+ *
+ * Descriptor overlap is deliberately loose, because the same fault is worded differently every time.
+ * A replacement number is not loose. "Square D QO120" and a record for "QO220CP" share every
+ * description word there is - square, d, qo, circuit, breaker, panel - and are a single-pole 120 V
+ * breaker and a two-pole 240 V breaker respectively. Only an identifier given for the replacement
+ * itself counts here: a flushometer's own model ("Sloan Royal 111") is equipment, not the part, and
+ * legitimately differs from the repair kit that fixes it.
+ */
+function answersDesignation(record: RegistryRecord, stated: string[]) {
+  if (!stated.length) return true;
+  const known = [strip(record.model), strip(record.sku)].filter(Boolean);
+  if (!known.length) return true;
+  return stated.some(s => known.some(k => k === s || k.startsWith(s) || s.startsWith(k)));
+}
+
 export async function lookupPart(trade: string, part: JobPart): Promise<RegistryRecord | null> {
   const intent = part.intent;
   const fixture = intent?.fixture || part.equipment, suspected = intent?.suspectedPart || part.description;
@@ -114,6 +131,9 @@ export async function lookupPart(trade: string, part: JobPart): Promise<Registry
     ?? bestMatch(learned.values(), trade, wanted, intent?.manufacturer || "")
     ?? bestMatch((await seed()).values(), trade, wanted, intent?.manufacturer || "");
   if (!record || isStale(record)) return null;
+  // The replacement number the technician gave, if they gave one, settles which part this is.
+  const stated = [intent?.exactModel, part.sku].map(v => strip(String(v ?? ""))).filter(Boolean);
+  if (!answersDesignation(record, stated)) return null;
   // A stated constraint the record does not carry cannot be answered from memory; research it instead.
   const required = intent?.constraints ?? [];
   const satisfied = required.every(c => record.specifications.some(s =>
@@ -136,10 +156,21 @@ export function candidateFromRecord(record: RegistryRecord, part: JobPart): Reso
   };
 }
 
-/** Record a resolution that Exa established, so the next identical job skips discovery. */
-export function rememberPart(trade: string, part: JobPart, resolved: ResolvedPart) {
+/**
+ * Record a resolution that Exa established, so the next identical job skips discovery.
+ *
+ * Only a settled conclusion may be written. Discovery routinely returns several candidates for one
+ * fault — a 1222 and a 1225 for the same dripping Moen — and every one of them carries the questions
+ * that separate them. Writing those to the registry would keep whichever happened to be last in the
+ * array and hand it to the next technician stripped of the questions, as a confirmed part. `sole` is
+ * the caller's statement that this candidate was the only one offered for the fault; anything less
+ * stays a research result and is researched again next time.
+ */
+export function rememberPart(trade: string, part: JobPart, resolved: ResolvedPart, sole = true) {
   // Only an evidence-backed identifier is worth remembering; a guess would be repeated forever.
-  if (!resolved.verified || !resolved.partNumber || resolved.confidence === "low") return;
+  if (!resolved.verified || !resolved.partNumber || resolved.confidence !== "high") return;
+  // An open question or a recorded conflict is exactly the uncertainty a cached hit would erase.
+  if (!sole || resolved.questions?.length || resolved.conflicts?.length) return;
   const intent = part.intent;
   // The technician's manufacturer wording, not the resolved legal name, or the write cannot be read back.
   const key = registryKey(trade, intent?.fixture || part.equipment, intent?.suspectedPart || part.description, intent?.manufacturer || "");

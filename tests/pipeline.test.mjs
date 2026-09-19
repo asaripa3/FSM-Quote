@@ -94,3 +94,97 @@ test('a requirement stated by two faults becomes one check, not a duplicate Reac
   const labels = merged.map(c => `Confirm ${c.field}: ${c.value}`);
   assert.equal(new Set(labels).size, labels.length);
 });
+
+test('an unsettled alternative is never written to the registry as a confirmed part', async () => {
+  const { rememberPart, lookupPart } = await import('../lib/server/registry.ts');
+  const fault = {id:'part-1',description:'cartridge looks seized',query:'moen cartridge',quantity:1,sku:'',equipment:'Moen single-handle shower valve',
+    intent:{rawContext:'Older Moen single-handle shower keeps dripping.',manufacturer:'Moen',fixture:'single-handle shower valve',
+      symptom:'dripping after shutoff',suspectedPart:'cartridge',possibleFamily:'Posi-Temp',exactModel:'',confidence:0.6,route:'ambiguous',constraints:[]}};
+  const candidate = (model, extra) => ({id:`r-${model}`,partIds:['part-1'],name:`Moen ${model} cartridge`,manufacturer:'Moen',partNumber:model,sku:'',
+    reason:'Documentation suggests this fits.',evidence:'Posi-Temp cartridge',verified:true,sourceUrl:'https://www.moen.com/x',sourceLabel:'moen.com',
+    supporting:[],searchQuery:`Moen ${model}`,skuStatus:'unknown',skuNote:'',route:'ambiguous',confidence:'high',constraints:[],conflicts:[],questions:[],...extra});
+
+  // Two candidates for one fault: the technician has not chosen, so the run concludes nothing. Writing
+  // either one used to leave whichever came last as a high-confidence hit with its questions removed.
+  rememberPart('plumbing', fault, candidate('1222'), false);
+  rememberPart('plumbing', fault, candidate('1225'), false);
+  assert.equal(await lookupPart('plumbing', fault), null);
+
+  // An open question is that same uncertainty in one candidate rather than across two.
+  rememberPart('plumbing', fault, candidate('1222', {questions:['Confirm the valve is Posi-Temp.']}), true);
+  assert.equal(await lookupPart('plumbing', fault), null);
+  // So is a candidate discovery itself would not call settled.
+  rememberPart('plumbing', fault, candidate('1222', {confidence:'medium'}), true);
+  assert.equal(await lookupPart('plumbing', fault), null);
+
+  // A sole, question-free, high-confidence resolution is the conclusion the registry exists to keep.
+  rememberPart('plumbing', fault, candidate('1222'), true);
+  const kept = await lookupPart('plumbing', fault);
+  assert.equal(kept?.model, '1222');
+});
+
+test('a requirement survives the model rewording its units', async () => {
+  const { normalizeIntent } = await import('../lib/intent.ts');
+  const note = 'Commercial lighting contactor chatters. Coil is marked 120 V. Frame number is hard to read.';
+  const part = {description:'lighting contactor coil',equipment:'commercial lighting contactor',sku:''};
+  const intent = value => normalizeIntent({rawContext:'Coil is marked 120 V.',manufacturer:'',fixture:'lighting contactor',symptom:'chatters',
+    suspectedPart:'coil',possibleFamily:'',exactModel:'',confidence:0.5,route:'ambiguous',constraints:[{field:'voltage',value}]}, note, part);
+  // The note says "120 V"; extraction returns "120 volts" about as often. A literal check dropped the
+  // requirement silently, so no voltage check was ever raised against any supplier page.
+  for (const wording of ['120 V','120V','120 volts','120 Volts']) assert.equal(intent(wording).constraints.length, 1, wording);
+  // A requirement the note does not state is still refused, which is what stops invented defaults.
+  assert.equal(intent('240 volts').constraints.length, 0);
+});
+
+test('the counts stated in the note open the cart, and a kit covering two faults stays one kit', async () => {
+  const { statedQuantities } = await import('../lib/job.ts');
+  const job = {summary:'',equipment:'',laborHours:1,parts:[
+    {id:'part-1',description:'cartridge',query:'',quantity:4,sku:'',equipment:''},
+    {id:'part-2',description:'escutcheon',query:'',quantity:1,sku:'',equipment:''},
+    {id:'part-3',description:'trim screws',query:'',quantity:2,sku:'',equipment:''}],questions:[]};
+  const discovery = {parts:[{id:'r1',partIds:['part-1']},{id:'r2',partIds:['part-2','part-3']}],unresolved:[],pagesScanned:0,trace:[]};
+  const quantities = statedQuantities(discovery, job);
+  assert.equal(quantities.r1, 4);                       // four cartridges is four line items' worth
+  assert.equal(quantities.r2, 2);                       // one kit answering both faults, at the larger count
+  assert.deepEqual(statedQuantities(discovery, null), {});
+});
+
+test('an estimate too long for one page breaks instead of printing over its own footer', async () => {
+  const { createQuotePdf } = await import('../lib/quote-pdf.ts');
+  const { TRADES, buildQuote } = await import('../lib/trades.ts');
+  const { PDFDocument } = await import('pdf-lib');
+  const pack = TRADES.plumbing;
+  const line = i => ({part:{id:`r${i}`,intent:`Item ${i}`,discoveryQuery:'q',discovery:{sku:`SKU-000${i}`,name:`Replacement cartridge assembly, item ${i}`,manufacturer:'Moen',reason:'',pagesScanned:6},compatibility:{verified:true,statement:'',evidence:'',sourceLabel:'',sourceUrl:''},productQuery:'q',listings:[]},
+    listing:{supplier:'supplyhouse.com',domain:'supplyhouse.com',url:'https://supplyhouse.com/x',price:42.5+i,badges:[],match:'compatible',stock:'In stock'},qty:2});
+  const pageCount = async n => {
+    const lines = Array.from({length:n},(_,i)=>line(i+1));
+    const quote = buildQuote(lines.map(l=>l.listing.price),lines.map(l=>l.qty),18,2,150);
+    const demo = {...pack.demo,customer:'Harborview Property Group',site:'214 Mill Street',laborHours:2,parts:lines.map(l=>l.part)};
+    return (await PDFDocument.load(await createQuotePdf({...pack,demo},lines,quote,'Northside Plumbing'))).getPageCount();
+  };
+  // A short estimate stays on one page; six items used to run the totals off the bottom edge and drop
+  // the supplier references entirely, because everything was drawn on a single fixed page.
+  assert.equal(await pageCount(1), 1);
+  assert.equal(await pageCount(3), 1);
+  assert.equal(await pageCount(6), 2);
+  assert.equal(await pageCount(12), 3);
+});
+
+test('a remembered part cannot answer for a different replacement number', async () => {
+  const { lookupPart } = await import('../lib/server/registry.ts');
+  // The shipped registry holds a Square D QO220CP: a two-pole 240 V breaker. A note asking for a
+  // QO120 shares every description word with it, so descriptor overlap matched and the estimate
+  // opened on the wrong breaker, labelled as resolved before and confirmed.
+  const breaker = (model) => ({id:'part-1',description:`Square D ${model} circuit breaker`,query:'',quantity:4,sku:model,equipment:'main panel',
+    intent:{rawContext:`order four Square D ${model} circuit breakers`,manufacturer:'Square D',fixture:'circuit breaker',symptom:'',
+      suspectedPart:'',possibleFamily:'QO series circuit breakers',exactModel:model,confidence:0,route:'ambiguous',constraints:[]}});
+  assert.equal(await lookupPart('electrical', breaker('QO120')), null);
+  assert.equal((await lookupPart('electrical', breaker('QO220CP')))?.model, 'QO220CP');
+
+  // A designation that names the equipment rather than the replacement still reaches its repair kit:
+  // "Sloan Royal 111" is the flushometer, and the part that fixes it is a V-651-A.
+  const flushometer = {id:'part-1',description:'flushometer keeps running after flush',query:'',quantity:1,sku:'',equipment:'Sloan Royal 111 flushometer',
+    intent:{rawContext:'Royal 111 flushometer keeps running after flush',manufacturer:'Sloan',fixture:'Royal 111 flushometer',symptom:'keeps running after flush',
+      suspectedPart:'vacuum breaker sleeve',possibleFamily:'',exactModel:'',confidence:0.5,route:'ambiguous',constraints:[]}};
+  assert.equal((await lookupPart('plumbing', flushometer))?.model, 'V-651-A');
+});

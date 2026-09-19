@@ -71,7 +71,11 @@ export async function searchProducts(body: ProductInput, signal?: AbortSignal, p
     // anyway — two calls and ~18s to reach what one call returns in under a second. Exa still crawls a page
     // it has no copy of, so freshness is not lost where it is actually obtainable.
     const contents = await exaContents({urls:shortlist.map(p=>p.url),...extractionOptions},signal);
-    trace.push({step:"Refresh supplier pages",endpoint:"POST /contents",query:shortlist.map(p=>p.url).join("\n"),searchType:"fresh page + Exa extraction",results:(contents.results ?? []).length,costDollars:contents.costDollars?.total ?? null,ms:Date.now()-started,requestId:contents.requestId});
+    // Say what the call actually did. Describing a cache-first read as a fresh crawl overstates the
+    // freshness of every price under it, and the row badges already distinguish the two honestly.
+    const statuses=(contents.statuses ?? []) as {id:string;status:string;source?:string}[];
+    const crawled=statuses.filter(successfulFreshContent).length, indexed=statuses.filter(usableContent).length-crawled;
+    trace.push({step:"Read supplier pages",endpoint:"POST /contents",query:shortlist.map(p=>p.url).join("\n"),searchType:`Exa extraction · ${indexed} from index, ${crawled} crawled`,results:(contents.results ?? []).length,costDollars:contents.costDollars?.total ?? null,ms:Date.now()-started,requestId:contents.requestId});
     const failedUrls=shortlist.filter(p=>!(contents.statuses??[]).some((s:{id:string;status:string})=>s.id===p.url&&s.status==="success")).map(p=>p.url);
     const fallbackPages=new Map<string,Record<string,unknown>>();
     if(failedUrls.length){

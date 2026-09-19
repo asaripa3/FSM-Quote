@@ -33,6 +33,20 @@ export type Discovery = { parts: ResolvedPart[]; unresolved: { partId: string; r
 export type PickedSource = { source: SourceOption; price: number; confirmed: boolean };
 export const validAmount = (value: number, max = 100000) => Number.isFinite(value) && value >= 0 && value <= max;
 
+/**
+ * The counts the technician stated, mapped onto the candidates that answer them.
+ *
+ * "Four cartridges and a puller" is a fact about the job, so the cart opens on those numbers rather
+ * than on one of each; without this the parsed quantity is validated and then never read, and a
+ * four-cartridge repair prints as a one-cartridge estimate unless someone notices. A candidate
+ * covering several faults takes the largest count among them: one kit answering two faults is still
+ * one kit, while a fault asking for four is four.
+ */
+export function statedQuantities(discovery: Discovery, job: ParsedJob | null): Record<string, number> {
+  if (!job) return {};
+  return Object.fromEntries(discovery.parts.map(r => [r.id, Math.max(1, ...r.partIds.map(id => job.parts.find(p => p.id === id)?.quantity ?? 1))]));
+}
+
 export type Constraint = { field: string; value: string };
 export type PartIntent = {
   rawContext: string;

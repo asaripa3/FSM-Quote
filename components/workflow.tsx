@@ -8,7 +8,7 @@ import { ExaResearch } from "./exa-research";
 import { readEventStream } from "@/lib/read-stream";
 import { AudioInput } from "./audio-input";
 import { buildQuote, money, type TradePack, type Part } from "@/lib/trades";
-import { validAmount, type JobSettings, type ParsedJob, type PickedSource, type Discovery, type ResolvedPart, type ExaTrace, type PipelineProgress, type ProductSearchResult } from "@/lib/job";
+import { statedQuantities, validAmount, type JobSettings, type ParsedJob, type PickedSource, type Discovery, type ResolvedPart, type ExaTrace, type PipelineProgress, type ProductSearchResult } from "@/lib/job";
 import type { QuoteLine } from "@/lib/quote-pdf";
 
 export function Workflow({pack}:{pack:TradePack}) {
@@ -33,11 +33,13 @@ export function Workflow({pack}:{pack:TradePack}) {
   setError("");setBusy(true);setStage("parsing");setJob(null);setDiscovery(null);setPicks({});setSearches({});setTrace([]);setEvents([]);setRoutes(null);setQuantities({});
   try{
    const response=await fetch("/api/quote-stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade:pack.id,note,settings:{supplierDomains:settings.supplierDomains,region:settings.region,preferredDomains:settings.preferredDomains||""}}),signal:c.signal});
+   // The parsed job is needed again when discovery lands, before React has re-rendered with it.
+   let parsed:ParsedJob|null=null;
    await readEventStream(response,(event,payload)=>{
     if(c.signal.aborted)return;
-    if(event==="job_parsed"){const parsed=payload as ParsedJob;setJob(parsed);setHours(parsed.laborHours??0);setStage("researching");}
+    if(event==="job_parsed"){parsed=payload as ParsedJob;setJob(parsed);setHours(parsed.laborHours??0);setStage("researching");}
     else if(event==="intent_routed"){const data=payload as {exact:string[];ambiguous:string[]};setRoutes({exact:data.exact.length,ambiguous:data.ambiguous.length});}
-    else if(event==="discovery_complete"){const found=payload as Discovery;setDiscovery(found);setTrace(found.trace||[]);}
+    else if(event==="discovery_complete"){const found=payload as Discovery;setDiscovery(found);setTrace(found.trace||[]);setQuantities(statedQuantities(found,parsed));}
     else if(event==="product_search_started"){const data=payload as {partId:string;query:string};setSearches(s=>({...s,[data.partId]:{loading:true,sources:[],error:"",query:data.query}}));}
     else if(event==="supplier_results"){const data=payload as ProductSearchResult & {partId:string};setSearches(s=>({...s,[data.partId]:{loading:false,sources:data.sources,error:"",query:data.query}}));setTrace(t=>[...t,...data.trace]);}
     else if(event==="supplier_error"){const data=payload as {partId:string;error:string};setSearches(s=>({...s,[data.partId]:{...s[data.partId],loading:false,error:data.error}}));}
