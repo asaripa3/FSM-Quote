@@ -20,10 +20,12 @@ export async function runQuotePipeline(input: {trade:string;note:string;settings
     // The model states the supersession on some runs and not others. Whole-unit replacement implies
     // it regardless: if the technician is replacing the appliance, the component that failed inside
     // it is not a second thing to buy, whether or not the extraction thought to say so.
-    ...job.parts.filter(p=>p.kind==="unit"&&p.intent?.suspectedPart).map(p=>({
-      subject:p.intent!.suspectedPart,
-      reason:`Covered by replacing the ${p.intent?.subject||p.description} rather than repairing it.`,
-      by:p.id})),
+    ...job.parts.filter(p=>p.kind==="unit").flatMap(p=>{
+      const covers=[p.intent?.suspectedPart ?? "", ...(p.intent?.ruledOut ?? [])].filter(Boolean);
+      return covers.map(subject=>({subject,
+        reason:`Covered by replacing the ${p.intent?.subject||p.description} rather than repairing it.`,
+        by:p.id}));
+    }),
   ];
   const superseded: {partId:string;reason:string}[]=[];
   const remaining=job.parts.filter(part=>{

@@ -1,5 +1,6 @@
 import { modelJson } from "./providers";
 import { describesSameWork, normalizeIntent } from "@/lib/intent";
+import { partIdentifier } from "@/lib/sourcing";
 import type { JobPart, ParsedJob } from "@/lib/job";
 
 /**
@@ -51,7 +52,15 @@ Quantity defaults to 1 only if unspecified. laborHours is null unless stated; gi
     // line item reads "replacement garbage disposal". The two fields it is reliable about settle it.
     // When what the technician intends to source is the equipment itself rather than something inside
     // it, this is a whole-unit replacement whatever the line item is called.
-    const kind=part.kind==="part"&&intent.subject&&part.equipment&&describesSameWork(intent.subject,part.equipment) ? "unit" as const : part.kind;
+    // Two signals, either of which distinguishes buying the equipment from buying a component of it:
+    // the subject carries the equipment's own designation, or the technician ruled a repair out. Word
+    // overlap alone is not enough, because "Moen shower cartridge" and "Moen single-handle shower"
+    // share two words of three and are a component and the valve it sits in.
+    // Measured over four runs of the same electrical note, the model called a load center replacement
+    // "unit" twice and "part" twice, and emitted its supersedes twice; ruledOut was identical all four
+    // times. So the derivation leans on ruledOut, which is the steadiest of the three.
+    const decided=Boolean(partIdentifier(intent.subject)) || intent.ruledOut.length>0;
+    const kind=part.kind==="part"&&intent.subject&&part.equipment&&decided&&describesSameWork(intent.subject,part.equipment) ? "unit" as const : part.kind;
     return {...part,kind,intent};
   });
   return {rawNote:note,summary:asText(data.summary).slice(0,1000),equipment:asText(data.equipment).slice(0,300),...labor(data.laborHours),parts,questions:data.questions.filter((v:unknown)=>typeof v==="string").slice(0,6)};

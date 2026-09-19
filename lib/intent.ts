@@ -29,7 +29,11 @@ export function normalizeIntent(value: unknown, note: string, part: Pick<JobPart
   // Preserve an actual note excerpt, never a reconstructed quotation.
   const context = text(data.rawContext, 2000);
   const rawContext = context && note.includes(context) ? context : part.description;
-  const exactModel = text(data.exactModel,100);
+  const maker = text(data.manufacturer,100);
+  // "Moen 1222" and "1222" come back about equally often for the same note. The page prints the maker
+  // and the designation apart, so the identifier check has to be the designation alone.
+  const stated = text(data.exactModel,100);
+  const exactModel = maker && stated.toLowerCase().startsWith(`${maker.toLowerCase()} `) ? stated.slice(maker.length).trim() : stated;
   const uncertainty = /\b(?:maybe|might|possibly|suspect|unsure|unknown|not sure|last time|previous|work order says)\b/i.test(rawContext);
   const explicit = exactModel && containsIdentifier(note,exactModel) && containsIdentifier(rawContext,exactModel);
   const list = (value: unknown, max: number) => Array.isArray(value) ? value.map(v=>text(v,200)).filter(Boolean).slice(0,max) : [];
@@ -42,7 +46,7 @@ export function normalizeIntent(value: unknown, note: string, part: Pick<JobPart
       })
     : [];
   const constraints: Constraint[] = Array.isArray(data.constraints) ? data.constraints.slice(0,8).flatMap(c=>c && typeof c === "object" && text(c.field) && text(c.value) && noteGrounds(note,text(c.value)) ? [{field:text(c.field,60),value:text(c.value,100)}] : []) : [];
-  return { rawContext,manufacturer:text(data.manufacturer,100),fixture:text(data.fixture,150)||part.equipment,symptom:text(data.symptom,300),suspectedPart:text(data.suspectedPart,150),
+  return { rawContext,manufacturer:maker,fixture:text(data.fixture,150)||part.equipment,symptom:text(data.symptom,300),suspectedPart:text(data.suspectedPart,150),
     // The subject is what gets searched for, so it falls back to the description rather than to the
     // component that failed: a disposal whose motor has gone is sourced as a disposal.
     subject:text(data.subject,200)||part.description,failureCause:text(data.failureCause,300),ruledOut:list(data.ruledOut,8),supersedes,
@@ -51,7 +55,15 @@ export function normalizeIntent(value: unknown, note: string, part: Pick<JobPart
 
 export function exactCandidate(part: JobPart) {
   const model = part.intent?.exactModel || part.sku;
-  return {id:`exact-${part.id}`,partIds:[part.id],name:[part.intent?.manufacturer,model,part.intent?.suspectedPart].filter(Boolean).join(" ")||part.description,manufacturer:part.intent?.manufacturer||"",partNumber:model,sku:part.sku,reason:"This part number was explicitly requested in the note. Exa will check supplier pages for the same product; fit still needs your review.",evidence:part.intent?.rawContext||part.description,verified:false,sourceUrl:"",sourceLabel:"Technician note",supporting:[],searchQuery:[part.intent?.manufacturer,model,part.intent?.suspectedPart].filter(Boolean).join(" "),route:"exact" as const,confidence:"high" as const,constraints:part.intent?.constraints||[],conflicts:[],questions:[]};
+  const subject = part.intent?.subject || part.description;
+  return {id:`exact-${part.id}`,partIds:[part.id],name:subject,manufacturer:part.intent?.manufacturer||"",partNumber:model,sku:part.sku,reason:"This part number was explicitly requested in the note. Exa will check supplier pages for the same product; fit still needs your review.",evidence:part.intent?.rawContext||part.description,verified:false,sourceUrl:"",sourceLabel:"Technician note",supporting:[],searchQuery:searchPhrase(part.intent?.manufacturer,subject),route:"exact" as const,confidence:"high" as const,constraints:part.intent?.constraints||[],conflicts:[],questions:[]};
+}
+
+/** Join the maker to the subject without repeating it when the subject already names it. */
+function searchPhrase(manufacturer: string | undefined, subject: string) {
+  const maker = (manufacturer ?? "").trim();
+  if (!maker || subject.toLowerCase().includes(maker.toLowerCase())) return subject.replace(/\s+/g," ").trim();
+  return `${maker} ${subject}`.replace(/\s+/g," ").trim();
 }
 
 /**
@@ -77,7 +89,7 @@ export function subjectCandidate(part: JobPart) {
   return {id:`sourced-${part.id}`,partIds:[part.id],name:subject,manufacturer:part.intent?.manufacturer||"",
     partNumber:part.sku||identifier,sku:part.sku,reason:`${sourcing} Exa is checking supplier pages for it now; fit still needs your review.`,
     evidence:part.intent?.rawContext||part.description,verified:false,sourceUrl:"",sourceLabel:"Technician note",supporting:[],
-    searchQuery:[part.intent?.manufacturer,subject].filter(Boolean).join(" ").replace(/\s+/g," ").trim(),
+    searchQuery:searchPhrase(part.intent?.manufacturer,subject),
     route:"exact" as const,confidence:"high" as const,
     constraints:part.intent?.constraints||[],conflicts:[],questions:[]};
 }
