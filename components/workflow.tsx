@@ -8,18 +8,21 @@ import { ExaResearch } from "./exa-research";
 import { readEventStream } from "@/lib/read-stream";
 import { AudioInput } from "./audio-input";
 import { buildQuote, money, type TradePack, type Part } from "@/lib/trades";
-import { statedQuantities, uncoveredWork, validAmount, type JobSettings, type ParsedJob, type PickedSource, type Discovery, type ResolvedPart, type ExaTrace, type PipelineProgress, type ProductSearchResult } from "@/lib/job";
+import { statedQuantities, uncoveredWork, validAmount, type Routes, type JobSettings, type ParsedJob, type PickedSource, type Discovery, type ResolvedPart, type ExaTrace, type PipelineProgress, type ProductSearchResult } from "@/lib/job";
 import type { QuoteLine } from "@/lib/quote-pdf";
 
 export function Workflow({pack}:{pack:TradePack}) {
  const defaultDomains="";
- const defaults:JobSettings={company:"",laborRate:pack.config.laborRate,markupPercent:pack.config.markupPercent,supplierDomains:defaultDomains,region:"United States"};
+ // The trade's own distributors rank first; they do not restrict the search. Measured on a Square D
+ // QO120, restricting to amazon/homedepot/lowes returned four pages and no price at all, while the
+ // unrestricted search priced it from two specialist breaker distributors. Preference, not exclusion.
+ const defaults:JobSettings={company:"",laborRate:pack.config.laborRate,markupPercent:pack.config.markupPercent,supplierDomains:defaultDomains,preferredDomains:pack.config.allowedDomains.join(", "),region:"United States"};
  const [settings,setSettings]=useState(defaults),[showSettings,setShowSettings]=useState(false),[saved,setSaved]=useState(false);
  const [customer,setCustomer]=useState(""),[site,setSite]=useState(""),[note,setNote]=useState(""),[hours,setHours]=useState(0);
  const [mode,setMode]=useState<"note"|"audio"|"mic">("note"),[job,setJob]=useState<ParsedJob|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState(""),[quoteOpen,setQuoteOpen]=useState(false);
  const [searches,setSearches]=useState<Record<string,SearchState>>({}),[picks,setPicks]=useState<Record<string,PickedSource>>({});
  const [discovery,setDiscovery]=useState<Discovery|null>(null),[stage,setStage]=useState<""|"parsing"|"researching">("");
- const [events,setEvents]=useState<PipelineProgress[]>([]),[routes,setRoutes]=useState<{exact:number;ambiguous:number}|null>(null);
+ const [events,setEvents]=useState<PipelineProgress[]>([]),[routes,setRoutes]=useState<Routes|null>(null);
  const runController=useRef<AbortController|null>(null);
  const [quantities,setQuantities]=useState<Record<string,number>>({});
  const [showExa,setShowExa]=useState(false),[trace,setTrace]=useState<ExaTrace[]>([]);
@@ -38,7 +41,8 @@ export function Workflow({pack}:{pack:TradePack}) {
    await readEventStream(response,(event,payload)=>{
     if(c.signal.aborted)return;
     if(event==="job_parsed"){parsed=payload as ParsedJob;setJob(parsed);setHours(parsed.laborHours??0);setStage("researching");}
-    else if(event==="intent_routed"){const data=payload as {exact:string[];ambiguous:string[]};setRoutes({exact:data.exact.length,ambiguous:data.ambiguous.length});}
+    else if(event==="intent_routed"){const data=payload as Record<"exact"|"registry"|"tools"|"ambiguous",string[]|undefined>;
+     setRoutes({exact:data.exact?.length??0,registry:data.registry?.length??0,tools:data.tools?.length??0,ambiguous:data.ambiguous?.length??0});}
     else if(event==="discovery_complete"){const found=payload as Discovery;setDiscovery(found);setTrace(found.trace||[]);setQuantities(statedQuantities(found,parsed));}
     else if(event==="product_search_started"){const data=payload as {partId:string;query:string};setSearches(s=>({...s,[data.partId]:{loading:true,sources:[],error:"",query:data.query}}));}
     else if(event==="supplier_results"){const data=payload as ProductSearchResult & {partId:string};setSearches(s=>({...s,[data.partId]:{loading:false,sources:data.sources,error:"",query:data.query}}));setTrace(t=>[...t,...data.trace]);}
@@ -58,10 +62,6 @@ export function Workflow({pack}:{pack:TradePack}) {
  const canPrint=!busy&&allConfirmed&&customer.trim().length>0&&validAmount(hours,1000)&&validAmount(settings.laborRate)&&validAmount(settings.markupPercent,1000);
  const quotePack:TradePack={...pack,config:{...pack.config,laborRate:settings.laborRate,markupPercent:settings.markupPercent},demo:{...pack.demo,customer,site,note,laborHours:hours,parts:lines.map(l=>l.part)}};
  const inSearch=Object.values(searches).some(s=>s.loading);
- const loadExample=(kind:"exact"|"ambiguous")=>{
-  const examples={plumbing:{exact:"Order one Moen 1222 cartridge for the shower repair. The part number is confirmed on the work order. Allow 45 minutes labor.",ambiguous:"Older Moen single-handle shower keeps dripping after shutoff. Cartridge looks seized. It might be Posi-Temp, but the model is unknown. Find candidate cartridges and tell me what to check before ordering."},hvac:{exact:"Order one Honeywell TH1110D2009 thermostat. The replacement part number is confirmed. Allow 30 minutes labor.",ambiguous:"Condenser fan hums but does not start. Capacitor label is worn. Equipment is a Carrier outdoor unit; model and capacitance rating need confirmation. Find what information and replacement candidates to check."},electrical:{exact:"Order one Square D QO120 circuit breaker. The replacement number is confirmed by the technician. Allow 30 minutes labor.",ambiguous:"Commercial lighting contactor chatters. Coil is marked 120 V. Manufacturer and frame number are hard to read. Research replacement options and identify the missing specifications before we order."}};
-  setNote(examples[pack.id][kind]);setJob(null);setDiscovery(null);setSearches({});setPicks({});setEvents([]);setTrace([]);
- };
  const appendTranscript=(text:string)=>setNote(n=>n?`${n.trim()} ${text.trim()}`:text.trim());
  return <div className="workshop"><div className="page-width">
   <div className="job-heading"><Image src={pack.mascot} alt="" width={pack.mascotW} height={pack.mascotH} unoptimized /><div><p className="eyebrow">{pack.name.toUpperCase()} WORKSPACE</p><h1>A new job. A clear estimate.</h1><p>Bring your field note. We’ll help with the rest.</p></div><div className="heading-controls"><ToggleControl label="Exa" enabled={showExa} onToggle={()=>setShowExa(v=>!v)}/><button className="secondary-button" onClick={()=>setShowSettings(true)}>⚙ Rates & suppliers</button></div></div>
@@ -72,8 +72,7 @@ export function Workflow({pack}:{pack:TradePack}) {
     <div className="input-tabs" role="group" aria-label="Input method">{([["note","Type a note"],["audio","Upload audio"],["mic","Use microphone"]] as const).map(([id,label])=><button key={id} aria-pressed={mode===id} className={mode===id?"active":""} onClick={()=>setMode(id)}>{label}</button>)}</div>
     {mode!=="note"&&!busy&&!job&&<AudioInput key={mode} mode={mode} onTranscript={appendTranscript}/>}
     <label className="note-label">{mode==="note"?"Inspection note":"Transcript — review and edit"}<textarea value={note} onChange={e=>setNote(e.target.value)} disabled={busy||!!job} rows={5} maxLength={12000} placeholder="What equipment did you inspect? What needs replacing? Include model numbers, quantities and labor time if you have them."/></label>
-    <div className="demo-paths"><span>Try either path</span><button disabled={busy||inSearch} onClick={()=>loadExample("exact")}>I know the part number ↗</button><button disabled={busy||inSearch} onClick={()=>loadExample("ambiguous")}>I only know the problem ↗</button></div>
-    <div className="note-actions"><button className="text-button" disabled={busy||inSearch} onClick={()=>{setNote(pack.demo.note);setJob(null);setDiscovery(null);setSearches({});setPicks({});setEvents([]);setTrace([]);}}>Use an example note</button>{job?<button className="secondary-button" disabled={busy||inSearch} onClick={()=>{setJob(null);setDiscovery(null);setSearches({});setPicks({});setEvents([]);setTrace([]);}}>Edit note & start again</button>:<button className="primary-button" disabled={busy||note.trim().length<12} onClick={analyze}>{busy?"Reading your note…":"Review the job"}<span>→</span></button>}</div>{error&&<p className="form-error" role="alert">{error}</p>}</div></section>
+        <div className="note-actions">{job?<button className="secondary-button" disabled={busy||inSearch} onClick={()=>{setJob(null);setDiscovery(null);setSearches({});setPicks({});setEvents([]);setTrace([]);}}>Edit note & start again</button>:<button className="primary-button" disabled={busy||note.trim().length<12} onClick={analyze}>{busy?"Reading your note…":"Review the job"}<span>→</span></button>}</div>{error&&<p className="form-error" role="alert">{error}</p>}</div></section>
    {job?<section className="job-card"><header><div><span className="section-number">02</span><h2>{discovery?"Your parts list":"Reading your note"}</h2></div><span>{discovery?`${discovery.pagesScanned} pages read`:""}</span></header><div className="job-card-body">
     <NoteReplay note={note} job={job} collapsed={!!discovery&&!busy}/>
     {stage==="researching"&&<p className="search-status" role="status"><span className="pulse-dot"/>Reading manufacturer and distributor pages with Exa to find what actually fixes this…</p>}

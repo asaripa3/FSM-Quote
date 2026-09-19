@@ -151,7 +151,7 @@ export function candidateFromRecord(record: RegistryRecord, part: JobPart): Reso
     sourceUrl: record.evidenceSource, sourceLabel: (() => { try { return new URL(record.evidenceSource).hostname.replace(/^www\./, ""); } catch { return "registry"; } })(),
     supporting: record.evidenceSource ? [{ url: record.evidenceSource, label: "previously verified" }] : [],
     searchQuery: [record.manufacturer, record.model, record.sku].filter(Boolean).join(" "),
-    skuStatus: "unknown", skuNote: "", route: "exact", confidence: "high",
+    route: "exact", confidence: "high",
     constraints: dedupeConstraints(record.specifications), conflicts: [], questions: [],
   };
 }

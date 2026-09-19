@@ -108,7 +108,6 @@ export function PartsCart({ discovery, searches, picks, quantities, onPick, onQu
                   <span key={s.url}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noopener noreferrer">{s.label} ↗</a></span>
                 ))}
               </p>
-              {part.skuNote && <p className={`sku-note ${part.skuStatus}`}>{part.skuNote}</p>}
             </details>
 
             {search?.loading && <p className="search-status" role="status"><span className="pulse-dot" />Pricing this part across your suppliers with Exa…</p>}

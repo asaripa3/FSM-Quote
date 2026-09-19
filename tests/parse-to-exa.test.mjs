@@ -123,7 +123,9 @@ test("a ~1000-word note is sent in full to LiveKit chat completions, not regex-s
   assert.equal(call.body.messages[1].content, note, "the entire note is the user message — no regex chunking");
   assert.equal(parsed.parts.length, 2);
   assert.equal(parsed.laborHours, 0.75);
-  assert.ok(parsed.parts.every((p) => typeof p.query === "string" && p.query.length > 10));
+  // What the pipeline actually routes on: a description, the equipment it sits on, and the intent.
+  assert.ok(parsed.parts.every((p) => typeof p.description === "string" && p.description.length > 3));
+  assert.ok(parsed.parts.every((p) => p.intent && typeof p.intent.rawContext === "string"));
 });
 
 test("a structured equipment field is read, not rejected as malformed", async (t) => {
@@ -154,18 +156,18 @@ test("a structured equipment field is read, not rejected as malformed", async (t
   assert.equal(parsed.parts.length, 2);
 });
 
-test("discover builds one Exa search query from parsed faults, not from the LLM per-part query field", async (t) => {
+test("discover builds one Exa search query from the parsed faults, not from note prose", async (t) => {
   const parsed = llmPartsPayload();
   parsed.parts = parsed.parts.map((p, i) => ({ id: `part-${i + 1}`, ...p }));
 
-  // Same mapping as Workflow.analyze(): description/equipment/sku only — p.query is dropped.
+  // Same mapping the pipeline uses: description, the equipment it sits on, and any cited number.
   const incoming = parsed.parts.map((p) => ({ id: p.id, description: p.description, equipment: p.equipment, sku: p.sku }));
   const fixtures = [...new Set(incoming.map((p) => p.equipment).filter(Boolean))];
   const expectedQuery = `${fixtures.join(" and ")} repair parts for ${incoming.map((p) => p.description).join(", ")}`;
 
   const workflow = readFileSync(join(root, "components/workflow.tsx"), "utf8");
   assert.ok(workflow.includes("/api/quote-stream"), "workspace uses the streamed pipeline");
-  assert.equal(incoming[0].query, undefined);
+  assert.ok(incoming.every((p) => p.description && typeof p.equipment === "string"));
 
   const exaCalls = [];
   const original = globalThis.fetch;
@@ -204,7 +206,8 @@ test("discover builds one Exa search query from parsed faults, not from the LLM 
   assert.equal(exaCalls[0].type, "auto");
   assert.ok(exaCalls[0].systemPrompt.includes("part-1: worn closet diaphragm"));
   assert.ok(!exaCalls[0].query.includes("Marriott"), "customer text is not the Exa search box");
-  assert.ok(!String(exaCalls[0].query).includes(parsed.parts[0].query), "LLM part.query is not what Exa searches");
+  // The search phrase is composed from the fault descriptions, never written by the model.
+  assert.ok(incoming.every((p) => exaCalls[0].query.includes(p.description)), "every fault description reaches the search");
   assert.equal(discovery.trace[0].endpoint, "POST /search");
   assert.equal(discovery.trace[0].query, expectedQuery);
   assert.ok(discovery.parts.length >= 1);
@@ -228,9 +231,9 @@ test("live LiveKit model decomposes the long note into Exa-ready faults", async 
   const parsed = await res.json();
   assert.equal(res.status, 200, parsed.error);
   assert.ok(Array.isArray(parsed.parts) && parsed.parts.length >= 1, JSON.stringify(parsed));
-  assert.ok(parsed.parts.every((p) => p.description && p.query));
-  assert.ok(parsed.parts.some((p) => /diaphragm|vacuum|breaker|closet/i.test(`${p.description} ${p.query}`)));
-  assert.ok(parsed.parts.every((p) => !/marriott|guest-room corridor contact/i.test(p.query)), "queries should stay product-only");
+  assert.ok(parsed.parts.every((p) => p.description));
+  assert.ok(parsed.parts.some((p) => /diaphragm|vacuum|breaker|closet/i.test(`${p.description} ${p.equipment}`)));
+  assert.ok(parsed.parts.every((p) => !/marriott|guest-room corridor contact/i.test(`${p.description} ${p.equipment}`)), "descriptions stay product-only");
 
   const incoming = parsed.parts.map((p) => ({ id: p.id, description: p.description, equipment: p.equipment, sku: p.sku }));
   const fixtures = [...new Set(incoming.map((p) => p.equipment).filter(Boolean))];
@@ -240,7 +243,7 @@ test("live LiveKit model decomposes the long note into Exa-ready faults", async 
   console.log("summary:", parsed.summary);
   console.log("equipment:", parsed.equipment);
   console.log("laborHours:", parsed.laborHours);
-  console.log("parts:", parsed.parts.map((p) => ({ id: p.id, description: p.description, sku: p.sku, query: p.query })));
+  console.log("parts:", parsed.parts.map((p) => ({ id: p.id, kind: p.kind, description: p.description, equipment: p.equipment, sku: p.sku })));
   console.log("questions:", parsed.questions);
   console.log("Exa identify query that discovery would send:\n ", exaQuery);
 });
