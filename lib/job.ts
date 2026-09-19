@@ -1,6 +1,8 @@
 export type JobSettings = { company: string; laborRate: number; markupPercent: number; supplierDomains: string; region: string; preferredDomains?: string };
-export type JobPart = { id: string; description: string; query: string; quantity: number; sku: string; equipment: string; intent?: PartIntent };
-export type ParsedJob = { summary: string; equipment: string; laborHours: number | null; parts: JobPart[]; questions: string[]; rawNote?: string };
+/** kind separates what is being replaced from what the technician needs in hand to do the work. */
+export type JobPart = { id: string; description: string; query: string; quantity: number; sku: string; equipment: string; kind?: "part" | "tool"; intent?: PartIntent };
+/** laborHours is the midpoint used for arithmetic; laborRange is what the technician actually said. */
+export type ParsedJob = { summary: string; equipment: string; laborHours: number | null; laborRange?: { min: number; max: number } | null; parts: JobPart[]; questions: string[]; rawNote?: string };
 export type SourceOption = { title: string; supplier: string; url: string; domain: string; price: number | null; currency: string; priceEvidence: string; sku: string; availability: string; image: string; retrievedAt: string; priceStatus?: "page-extracted" | "cached-page" | "needs-review"; currencyAssumed?: boolean; packQuantity?: number | null; packEvidence?: string; identityEvidence?: string; contentHash?: string; matchStatus?: "exact" | "needs-review" | "rejected"; conflicts?: string[]; missingChecks?: string[]; rankReason?: string; availabilityEvidence?: string };
 /** What Exa + the model concluded actually fixes the fault, before any price is looked up. */
 export type ResolvedPart = {

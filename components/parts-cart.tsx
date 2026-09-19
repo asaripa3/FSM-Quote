@@ -84,8 +84,10 @@ export function PartsCart({ discovery, searches, picks, quantities, onPick, onQu
               <button className="text-button" onClick={() => onRemove(part.id)} disabled={busy||search?.loading}>Remove</button>
             </header>
             {discovery.parts.some(other=>other.id!==part.id&&other.partIds.some(id=>part.partIds.includes(id)))&&<p className="candidate-choice">Alternative for the same repair. Choosing this replaces the other candidate in your estimate.</p>}
-            {part.conflicts?.map(c=><p className="cart-conflict" key={c}>Exa found a conflict: {c}</p>)}
-            {part.questions?.map(q=><p className="candidate-choice" key={q}>{q}</p>)}
+            {/* One actionable check stays in front of the estimator. Everything Exa weighed against this
+                candidate is real, but a wall of edge cases reads as the tool hedging rather than helping,
+                so the rest sits under "Why this part" as the supporting record. */}
+            {part.questions?.[0] && <p className="candidate-choice">Confirm before ordering: {part.questions[0]}</p>}
             {part.partIds.length > 1 && (
               <p className="cart-covers">One kit covers {part.partIds.length} of the reported faults: {part.partIds.map(faultLabel).filter(Boolean).join("; ")}</p>
             )}
@@ -93,6 +95,14 @@ export function PartsCart({ discovery, searches, picks, quantities, onPick, onQu
               <summary>Why this part <span className="exa-tag">EXA</span></summary>
               <p>{part.reason}</p>
               <blockquote>{part.evidence}</blockquote>
+              {!!part.conflicts?.length && <div className="cart-caveats">
+                <strong>Weighed against this candidate</strong>
+                {part.conflicts.map(c=><p key={c}>{c}</p>)}
+              </div>}
+              {(part.questions?.length ?? 0) > 1 && <div className="cart-caveats">
+                <strong>Also worth confirming on site</strong>
+                {part.questions!.slice(1).map(q=><p key={q}>{q}</p>)}
+              </div>}
               <p className="cart-sources">
                 {(part.supporting.length ? part.supporting : part.sourceUrl ? [{ url: part.sourceUrl, label: part.sourceLabel }] : []).map((s, i) => (
                   <span key={s.url}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noopener noreferrer">{s.label} ↗</a></span>

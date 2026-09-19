@@ -1,5 +1,5 @@
 import type { Discovery, JobSettings, PipelineStage, ResolvedPart } from "@/lib/job";
-import { exactCandidate } from "@/lib/intent";
+import { exactCandidate, toolCandidate } from "@/lib/intent";
 import { parseInspection } from "./input";
 import { discoverParts } from "./discovery";
 import { searchProducts } from "./product-search";
@@ -17,13 +17,17 @@ export async function runQuotePipeline(input: {trade:string;note:string;settings
   // A description already resolved for this equipment and symptom does not need researching again:
   // the registry answers it and the run goes straight to pricing. Stale or under-specified records
   // return nothing, so the part falls through to discovery as usual.
-  const ambiguous: typeof job.parts=[]; const fromRegistry: string[]=[];
+  const ambiguous: typeof job.parts=[]; const fromRegistry: string[]=[]; const tools: string[]=[];
   for(const part of job.parts.filter(p=>p.intent?.route!=="exact")){
+    // A tool the technician named is a commercial question, not a research one: they know what they
+    // need, they need somewhere to buy it. Researching "cartridge puller" in manufacturer documentation
+    // spends an Exa call to rediscover what the note already said.
+    if(part.kind==="tool"){ tools.push(part.id); direct.push(toolCandidate(part)); continue; }
     const record=await lookupPart(input.trade,part);
     if(record){ creditHit(record); direct.push(candidateFromRecord(record,part)); fromRegistry.push(part.id); }
     else ambiguous.push(part);
   }
-  emit("intent_routed",{exact:exact.map(p=>p.id),registry:fromRegistry,ambiguous:ambiguous.map(p=>p.id)});
+  emit("intent_routed",{exact:exact.map(p=>p.id),registry:fromRegistry,tools,ambiguous:ambiguous.map(p=>p.id)});
   if(fromRegistry.length) progress("resolving_part",`${fromRegistry.length} ${fromRegistry.length===1?"description was":"descriptions were"} resolved before for this equipment; reusing that part and pricing it now.`);
   let discovery: Discovery={parts:[],unresolved:[],pagesScanned:0,trace:[]};
   if(ambiguous.length){

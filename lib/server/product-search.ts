@@ -66,7 +66,11 @@ export async function searchProducts(body: ProductInput, signal?: AbortSignal, p
     // Exa owns both views; no second local model rewrites the web facts.
     const schema = {type:"object",properties:{price:{anyOf:[{type:"number"},{type:"null"}]},currency:{type:"string"},priceEvidence:{type:"string"},sku:{type:"string"},availability:{type:"string"},availabilityEvidence:{type:"string"},packQuantity:{anyOf:[{type:"integer"},{type:"null"}]},packEvidence:{type:"string"},identityEvidence:{type:"string"},matchesRequestedPart:{type:"boolean"},specifications:{type:"array",items:{type:"object",properties:{field:{type:"string"},value:{type:"string"},evidence:{type:"string"}},required:["field","value","evidence"]}}},required:["price","currency","priceEvidence","sku","availability","availabilityEvidence","packQuantity","packEvidence","identityEvidence","matchesRequestedPart","specifications"]};
     const extractionOptions = {text:true,livecrawlTimeout:15000,summary:{query:`${EXTRACTION_RULES} Requested product: ${body.query}. Constraints: ${JSON.stringify(body.constraints||[])}. ${usRegion ? "For this US search, bare dollars may be returned as USD; the app labels that assumption." : ""}`,schema},extras:{richImageLinks:3}};
-    const contents = await exaContents({urls:shortlist.map(p=>p.url),maxAgeHours:0,...extractionOptions},signal);
+    // Cache-first, not a forced live crawl. Measured against the big retailers, maxAgeHours:0 returned 0 of
+    // 4 pages in 15.2s because they refuse live crawling, and every price then came from the cached retry
+    // anyway — two calls and ~18s to reach what one call returns in under a second. Exa still crawls a page
+    // it has no copy of, so freshness is not lost where it is actually obtainable.
+    const contents = await exaContents({urls:shortlist.map(p=>p.url),...extractionOptions},signal);
     trace.push({step:"Refresh supplier pages",endpoint:"POST /contents",query:shortlist.map(p=>p.url).join("\n"),searchType:"fresh page + Exa extraction",results:(contents.results ?? []).length,costDollars:contents.costDollars?.total ?? null,ms:Date.now()-started,requestId:contents.requestId});
     const failedUrls=shortlist.filter(p=>!(contents.statuses??[]).some((s:{id:string;status:string})=>s.id===p.url&&s.status==="success")).map(p=>p.url);
     const fallbackPages=new Map<string,Record<string,unknown>>();

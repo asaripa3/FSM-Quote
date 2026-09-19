@@ -38,9 +38,10 @@ test('exact path streams real product retrieval and Exa extraction without disco
  const searches=calls.filter(c=>c.url.endsWith('/search'));
  assert.equal(searches.length,1);assert.equal(searches[0].body.category,'product');
  const contents=calls.find(c=>c.url.endsWith('/contents')).body;
- assert.equal(contents.maxAgeHours,0);assert.ok(contents.summary.schema);
+ // Cache-first: forcing a live crawl returned nothing on the big retailers and cost ~18s per run.
+ assert.equal(contents.maxAgeHours,undefined);assert.ok(contents.summary.schema);
  // A stated part number routes straight to product search: no discovery, and no registry reuse either.
- assert.deepEqual(events.find(e=>e.event==='intent_routed').data,{exact:['part-1'],registry:[],ambiguous:[]});
+ assert.deepEqual(events.find(e=>e.event==='intent_routed').data,{exact:['part-1'],registry:[],tools:[],ambiguous:[]});
  const result=events.find(e=>e.event==='supplier_results').data;
  assert.equal(result.sources[0].price,41.98);assert.equal(result.sources[0].url,supplier);assert.equal(result.sources[0].packQuantity,1);
  for(const stage of ['understanding_input','searching_products','validating_results','comparing_suppliers','complete'])assert.ok(events.some(e=>e.event===stage));
