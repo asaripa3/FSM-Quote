@@ -37,6 +37,15 @@ export async function searchProducts(body: ProductInput, signal?: AbortSignal, p
   if (domains.length>12 || domains.some(d=>!/^(?:[a-z0-9-]+\.)+[a-z]{2,}$/.test(d))) throw new Error("Supplier domains must look like supplyhouse.com.");
   const identifiers = [string(body.partNumber,100), string(body.sku,100)].filter(Boolean);
   const region = string(body.region,100) || "United States";
+  // This phrasing looks redundant beside category:"product" and it is not. Measured both ways over
+  // Moen 104421, Square D QO120 and Sloan A-1101-A: dropping "supplier product page" does halve the
+  // supplier homepages Exa returns, 9 against 4, which is what it looks like it should do. It also
+  // loses prices. Without those words the results shift to manufacturer and large-distributor pages
+  // (se.com, graybar, smcelectric) that rank well and publish no price a technician can quote, while
+  // the retail and small-distributor pages that do publish one drop out. On the hardest part, three
+  // back-to-back runs each way gave 1, 1, 1 priced pages with the phrasing and 0, 1, 0 without it.
+  // The homepages are the price of that retail bias, and the prefilter now discards them for free.
+  // Region is the technician's setting; it does not drive the USD assumption, which reads body.region.
   const query = `${body.query} supplier product page in ${region}`;
   // US retail pages price in bare dollars and never write "USD", so demanding the literal blocks every
   // Home Depot, Lowe's and Amazon listing. Scope the assumption to a US search and label it on the card.
