@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { exaSearch, exaContents, modelJson, safeError, sameOrigin } from "@/lib/server/providers";
-import { containsIdentifier, evidenceOnPage, priceOnPage, successfulFreshContent, usableContent } from "@/lib/sourcing";
+import { containsIdentifier, evidenceOnPage, priceExcerpt, priceOnPage, successfulFreshContent, usableContent } from "@/lib/sourcing";
 import type { ExaTrace, SourceOption } from "@/lib/job";
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -86,13 +86,23 @@ export async function POST(request: Request) {
       const offer = matches.length === 1 ? matches[0] : {};
       const evidence = string(offer.priceEvidence), identity = string(offer.identityEvidence);
       const currency = string(offer.currency,10).toUpperCase();
-      const identitySupported = offer.matchesRequestedPart===true && identifiers.length>0 && identifiers.some(id=>containsIdentifier(identity,id)) && evidenceOnPage(identity,page.text);
+      // The deterministic check is stronger than the extraction's own opinion: the page's identity excerpt
+      // must carry the requested identifier and be verbatim on the page. That opinion is kept only to reject
+      // accessories, which identify themselves by compatibility phrasing ("fits", "for use with") rather than
+      // by being the product. Without this, a packaging variant of the same kit (A-1101-A-BX / 3301150) is
+      // discarded even though its page publishes a price.
+      const compatibilityPhrasing = /\b(?:fits|for use with|compatible with|replacement for|accessory|suits)\b/i.test(identity);
+      const identitySupported = identifiers.length>0 && identifiers.some(id=>containsIdentifier(identity,id)) && evidenceOnPage(identity,page.text)
+        && (offer.matchesRequestedPart===true || !compatibilityPhrasing);
       const explicitUsd = /\bUSD\b|US\s*\$/i.test(page.text);
       const price = typeof offer.price === "number" && page.usable && identitySupported && currency==="USD" && (explicitUsd || usRegion) && priceOnPage(offer.price,evidence,page.text) ? offer.price : null;
       const currencyAssumed = price !== null && !explicitUsd;
+      // When a price is refused, say what the page actually showed. "Needs confirmation" with no detail
+      // reads as a broken fetch; naming the amount we saw and why it was not accepted is actionable.
+      const visible = [...new Set((page.text.match(/\$\s?\d[\d,]*\.\d{2}/g) ?? []).map(v=>v.replace(/\s/g,"")))].slice(0,3);
       const packEvidence = string(offer.packEvidence);
       const packQuantity = typeof offer.packQuantity === "number" && Number.isInteger(offer.packQuantity) && offer.packQuantity>0 && offer.packQuantity<=10000 && evidenceOnPage(packEvidence,page.text) ? offer.packQuantity : null;
-      return {title:page.title,supplier:page.domain,domain:page.domain,url:page.url,price,currency:currency||"Unknown",priceEvidence:price!==null?evidence:!page.usable?"Supplier page could not be fetched. Open it to confirm price.":extractionFailed?"Price extraction unavailable. Open the supplier page to confirm price.":!identitySupported?"Exact product identity needs confirmation on the supplier page.":"No unambiguous USD selling price could be supported by the page.",sku:string(offer.sku,100),availability:string(offer.availability,200)||"Check supplier page",image:page.image,retrievedAt:new Date().toISOString(),priceStatus:price===null?"needs-review":page.live?"page-extracted":"cached-page",currencyAssumed,packQuantity,packEvidence:packQuantity?packEvidence:"",identityEvidence:identitySupported?identity:"",contentHash:page.text?createHash("sha256").update(page.text).digest("hex"):""};
+      return {title:page.title,supplier:page.domain,domain:page.domain,url:page.url,price,currency:currency||"Unknown",priceEvidence:price!==null?priceExcerpt(evidence,price):!page.usable?"Supplier page could not be fetched. Open it to confirm price.":extractionFailed?"Price extraction unavailable. Open the supplier page to confirm price.":!identitySupported?`This page does not identify itself as ${identifiers[0] ?? "the requested part"}${visible.length?`, though it shows ${visible.join(" and ")}`:""}. Open it to check whether it is the right product.`:visible.length?`The page shows ${visible.join(" and ")}, but none could be tied to this product as its outright selling price. Open it to confirm.`:"This page publishes no price; open the supplier page to confirm.",sku:string(offer.sku,100),availability:string(offer.availability,200)||"Check supplier page",image:page.image,retrievedAt:new Date().toISOString(),priceStatus:price===null?"needs-review":page.live?"page-extracted":"cached-page",currencyAssumed,packQuantity,packEvidence:packQuantity?packEvidence:"",identityEvidence:identitySupported?identity:"",contentHash:page.text?createHash("sha256").update(page.text).digest("hex"):""};
     });
     // Preserve retrieval relevance; a low price is not evidence of a better-fitting part.
     return Response.json({query,sources,trace});

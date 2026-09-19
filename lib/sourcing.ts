@@ -45,3 +45,16 @@ export function successfulFreshContent(status: { status?: string; source?: strin
 export function usableContent(status: { status?: string } | undefined) {
   return status?.status === "success";
 }
+
+/**
+ * Trim a validated price excerpt for display. Retail pages interleave the selling price with financing
+ * copy ("Pay $41.96 after $25 OFF ... opening a new card"), so showing the raw excerpt puts a second,
+ * unrelated amount next to the price. Keep the line carrying the validated amount.
+ */
+export function priceExcerpt(evidence: string, price: number) {
+  const clean = evidence.replace(/\*\*/g, "").replace(/\r/g, "");
+  const amount = price.toFixed(2);
+  const line = clean.split(/\n+/).map(l => l.trim()).filter(Boolean)
+    .find(l => l.includes(amount) || l.includes(Number(price).toLocaleString("en-US", {minimumFractionDigits:2})));
+  return (line ?? clean.replace(/\n+/g, " ")).replace(/\s+/g, " ").trim().slice(0, 180);
+}

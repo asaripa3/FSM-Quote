@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { containsIdentifier, evidenceOnPage, priceOnPage, successfulFreshContent, usableContent } from '../lib/sourcing.ts';
+import { containsIdentifier, evidenceOnPage, priceOnPage, successfulFreshContent, usableContent, priceExcerpt } from '../lib/sourcing.ts';
 
 test('a cheaper amount cannot be supported by a substring of another price', () => {
   assert.equal(priceOnPage(41.98, 'Price $141.98 USD each', 'Price $141.98 USD each'), false);
@@ -41,4 +41,12 @@ test('cached retailer text is usable for extraction but is not a fresh crawl', (
   assert.equal(successfulFreshContent({status:'success',source:'cached'}), false);
   assert.equal(usableContent({status:'error'}), false);
   assert.equal(usableContent(undefined), false);
+});
+
+test('a displayed price excerpt drops interleaved financing copy', () => {
+  const raw = '$66.96\nApply Now\nPay**$41.96**after**$25 OFF**your total qualifying purchase upon opening a new card.info';
+  const shown = priceExcerpt(raw, 66.96);
+  assert.equal(shown.includes('66.96'), true);
+  assert.equal(shown.includes('41.96'), false);
+  assert.equal(priceExcerpt('Price: 70.43 USD.', 70.43), 'Price: 70.43 USD.');
 });
