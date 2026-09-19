@@ -37,6 +37,18 @@ export type PickedSource = { source: SourceOption; price: number; confirmed: boo
 export const validAmount = (value: number, max = 100000) => Number.isFinite(value) && value >= 0 && value <= max;
 
 /**
+ * What a ticked row puts in the estimate.
+ *
+ * This used to require the page to state a pack size of one, on the reasoning that an unlabelled price
+ * might be for a pack. Measured over twelve real supplier rows, one stated it. Supplier pages simply do
+ * not write "sold as each", and the extraction is instructed never to infer it, so three of every four
+ * priced rows arrived in the estimate as $0.00 and the cart read as broken. The listed price is carried
+ * instead, with the pack caution travelling beside it: the estimate line stays editable, states what the
+ * page did and did not say, and cannot be printed until the estimator confirms fit, pack size and price.
+ */
+export const openingPrice = (source: SourceOption) => source.price ?? 0;
+
+/**
  * The counts the technician stated, mapped onto the candidates that answer them.
  *
  * "Four cartridges and a puller" is a fact about the job, so the cart opens on those numbers rather

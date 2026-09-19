@@ -349,3 +349,16 @@ test('a unit replacement is filed under the equipment, not the component that fa
     intent:{...base, ruledOut:[], suspectedPart:'disposal motor', subject:'disposal motor'}};
   assert.equal(await lookupPart('plumbing', motorOnly), null);
 });
+
+test('a priced row carries its price into the estimate even when the page is silent on pack size', async () => {
+  const { openingPrice } = await import('../lib/job.ts');
+  // Measured over twelve real supplier rows, exactly one stated a pack size of one. Requiring that
+  // put $0.00 in the estimate for three of every four priced rows.
+  assert.equal(openingPrice({price:89.1, packQuantity:null}), 89.1);
+  assert.equal(openingPrice({price:88.76, packQuantity:1}), 88.76);
+  // A stated multi-pack still carries its price; the row and the estimate line both say it is a pack,
+  // and the unit cost is the estimator's to set before the line can be confirmed.
+  assert.equal(openingPrice({price:42, packQuantity:10}), 42);
+  // A row with no accepted price still contributes nothing.
+  assert.equal(openingPrice({price:null, packQuantity:null}), 0);
+});

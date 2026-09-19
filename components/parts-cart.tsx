@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { money } from "@/lib/trades";
-import type { Discovery, PickedSource, ResolvedPart, SourceOption } from "@/lib/job";
+import { openingPrice, type Discovery, type PickedSource, type ResolvedPart, type SourceOption } from "@/lib/job";
 
 export type SearchState = { loading: boolean; sources: SourceOption[]; error: string; query: string };
 
@@ -23,10 +23,10 @@ function Offer({ source, part, picked, quantity, onPick, onQuantity }: {
   source: SourceOption; part: ResolvedPart; picked: boolean; quantity: number;
   onPick: (pick: PickedSource | null) => void; onQuantity: (value: number) => void;
 }) {
-  // The page price is carried into the estimate so ticking a row behaves like a cart. Where the pack size
-  // is unknown or greater than one it may be a pack price, which the row says plainly and the estimator
-  // confirms line by line before anything can be printed.
-  const startingPrice = source.packQuantity===1 ? source.price ?? 0 : 0;
+  // The page price is carried into the estimate so ticking a row behaves like a cart. Where the pack
+  // size is unknown or greater than one it may be a pack price, which both the row and the estimate
+  // line say plainly, and the estimator confirms line by line before anything can be printed.
+  const startingPrice = openingPrice(source);
   return (
     <tr className={picked ? "cart-row picked" : "cart-row"}>
       <td className="cart-pick">
