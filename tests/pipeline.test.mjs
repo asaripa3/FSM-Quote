@@ -76,3 +76,21 @@ test('stream parser handles byte splits and reports truncated streams',async()=>
  assert.equal(seen[0].payload.message,'Moen → suppliers');assert.equal(seen[1].event,'complete');
  await assert.rejects(()=>readEventStream(new Response('event: searching_products\ndata: {}\n\n'),()=>{}),/ended early/);
 });
+
+test('a requirement stated by two faults becomes one check, not a duplicate React key', async () => {
+  const { dedupeConstraints } = await import('../lib/intent.ts');
+  // A shutoff valve and its supply line are both half-inch; the candidate covering both used to carry
+  // the requirement twice, which printed "Confirm size: half-inch" twice and collided as a key.
+  const merged = dedupeConstraints([
+    { field: 'size', value: 'half-inch' },
+    { field: 'size', value: 'half-inch' },
+  ]);
+  assert.equal(merged.length, 1);
+  // Case and padding are wording, not meaning.
+  assert.equal(dedupeConstraints([{field:'Size',value:'Half-Inch'},{field:'size',value:' half-inch '}]).length, 1);
+  // Genuinely different requirements both survive.
+  assert.equal(dedupeConstraints([{field:'size',value:'half-inch'},{field:'voltage',value:'440v'}]).length, 2);
+  // The labels the card renders are now unique, which is what the key relies on.
+  const labels = merged.map(c => `Confirm ${c.field}: ${c.value}`);
+  assert.equal(new Set(labels).size, labels.length);
+});

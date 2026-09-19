@@ -1,5 +1,6 @@
 import { exaSearch } from "@/lib/server/providers";
 import { containsIdentifier, evidenceAnchored, evidenceGrounding, partIdentifier } from "@/lib/sourcing";
+import { dedupeConstraints } from "@/lib/intent";
 import type { Discovery, ExaTrace, ResolvedPart, PartIntent } from "@/lib/job";
 
 const EXCERPT = 12000;
@@ -109,7 +110,7 @@ export async function discoverParts(parts: Incoming[], signal?: AbortSignal, alt
       const grounds = Array.isArray(result.output?.grounding) ? result.output.grounding.filter((g:{field?:string})=>String(g.field||"").includes(`parts[${i}]`) || String(g.field||"").includes(`parts.${i}`)) : [];
       const groundedLinks = grounds.flatMap((g:{citations?:{url:string;title?:string}[]})=>g.citations||[]).filter((c:{url:string})=>sources.some(p=>p.url===c.url));
       for (const citation of groundedLinks) if (!supporting.some(s=>s.url===citation.url)) supporting.push({url:citation.url,label:new URL(citation.url).hostname});
-      resolved.push({ route:"ambiguous",confidence:grounds.some((g:{confidence?:string})=>g.confidence==="high") ? "high" : grounds.some((g:{confidence?:string})=>g.confidence==="medium") ? "medium" : "low",constraints:parts.filter(p=>partIds.includes(p.id)).flatMap(p=>p.intent?.constraints||[]),questions:Array.isArray(raw.questions)?raw.questions.filter((q:unknown)=>typeof q==="string").slice(0,5):alternatives ? ["Confirm this candidate against the equipment model and applicable ratings before adding it."] : [],conflicts:Array.isArray(raw.conflicts)?raw.conflicts.filter((q:unknown)=>typeof q==="string").slice(0,5):[],id:`resolved-${i+1}`, partIds, name, manufacturer:String(raw.manufacturer ?? "").slice(0,100), partNumber, sku,
+      resolved.push({ route:"ambiguous",confidence:grounds.some((g:{confidence?:string})=>g.confidence==="high") ? "high" : grounds.some((g:{confidence?:string})=>g.confidence==="medium") ? "medium" : "low",constraints:dedupeConstraints(parts.filter(p=>partIds.includes(p.id)).flatMap(p=>p.intent?.constraints||[])),questions:Array.isArray(raw.questions)?raw.questions.filter((q:unknown)=>typeof q==="string").slice(0,5):alternatives ? ["Confirm this candidate against the equipment model and applicable ratings before adding it."] : [],conflicts:Array.isArray(raw.conflicts)?raw.conflicts.filter((q:unknown)=>typeof q==="string").slice(0,5):[],id:`resolved-${i+1}`, partIds, name, manufacturer:String(raw.manufacturer ?? "").slice(0,100), partNumber, sku,
         reason:String(raw.reason ?? "").slice(0,600), evidence, verified, sourceUrl:source.url, sourceLabel:source.domain, supporting,
         searchQuery:[...new Set([String(raw.manufacturer ?? "").trim(), partNumber, sku].filter(Boolean))].join(" ").slice(0,600), skuStatus:status, skuNote:status === "unknown" ? "" : String(raw.skuNote ?? "").slice(0,300) });
     }

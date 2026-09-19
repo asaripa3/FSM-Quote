@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Constraint, JobPart, ResolvedPart } from "@/lib/job";
+import { dedupeConstraints } from "@/lib/intent";
 
 /**
  * Resolved Part Registry.
@@ -131,7 +132,7 @@ export function candidateFromRecord(record: RegistryRecord, part: JobPart): Reso
     supporting: record.evidenceSource ? [{ url: record.evidenceSource, label: "previously verified" }] : [],
     searchQuery: [record.manufacturer, record.model, record.sku].filter(Boolean).join(" "),
     skuStatus: "unknown", skuNote: "", route: "exact", confidence: "high",
-    constraints: record.specifications, conflicts: [], questions: [],
+    constraints: dedupeConstraints(record.specifications), conflicts: [], questions: [],
   };
 }
 
@@ -148,7 +149,7 @@ export function rememberPart(trade: string, part: JobPart, resolved: ResolvedPar
     canonicalPartId: key, trade,
     manufacturer: resolved.manufacturer, model: resolved.partNumber, sku: resolved.sku, name: resolved.name,
     aliases: [...new Set([...(existing?.aliases ?? []), alias])].slice(0, MAX_ALIASES),
-    specifications: resolved.constraints ?? existing?.specifications ?? [],
+    specifications: dedupeConstraints(resolved.constraints ?? existing?.specifications ?? []),
     knownSupplierUrls: [...new Set([...(existing?.knownSupplierUrls ?? []), ...resolved.supporting.map(s => s.url)])].slice(0, MAX_SUPPLIER_URLS),
     evidence: resolved.evidence, evidenceSource: resolved.sourceUrl,
     lastVerifiedAt: new Date().toISOString(), hits: existing?.hits ?? 0,

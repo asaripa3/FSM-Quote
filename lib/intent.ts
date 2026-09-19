@@ -1,6 +1,20 @@
 import type { Constraint, JobPart, PartIntent } from "./job";
 import { containsIdentifier } from "./sourcing";
 
+/**
+ * A constraint means the same thing however many faults state it. Two items on one job that are both
+ * half-inch produce the same requirement twice, which reaches the card as a repeated "Confirm size:
+ * half-inch" and, because the text is the React key, as a duplicate-key warning. Collapse on meaning.
+ */
+export function dedupeConstraints(constraints: Constraint[]): Constraint[] {
+  const seen = new Map<string, Constraint>();
+  for (const c of constraints) {
+    const key = `${c.field.trim().toLowerCase()}|${c.value.trim().toLowerCase()}`;
+    if (!seen.has(key)) seen.set(key, c);
+  }
+  return [...seen.values()];
+}
+
 const text = (v: unknown, max = 600) => typeof v === "string" ? v.trim().slice(0, max) : "";
 export function normalizeIntent(value: unknown, note: string, part: Pick<JobPart,"description"|"equipment"|"sku">): PartIntent {
   const data = value && typeof value === "object" ? value as Record<string,unknown> : {};
@@ -12,7 +26,7 @@ export function normalizeIntent(value: unknown, note: string, part: Pick<JobPart
   const explicit = exactModel && containsIdentifier(note,exactModel) && containsIdentifier(rawContext,exactModel);
   const confidence = typeof data.confidence === "number" && Number.isFinite(data.confidence) ? Math.min(1,Math.max(0,data.confidence)) : 0;
   const constraints: Constraint[] = Array.isArray(data.constraints) ? data.constraints.slice(0,8).flatMap(c=>c && typeof c === "object" && text(c.field) && text(c.value) && note.toLowerCase().replace(/\s+/g,"").includes(text(c.value).toLowerCase().replace(/\s+/g,"")) ? [{field:text(c.field,60),value:text(c.value,100)}] : []) : [];
-  return { rawContext,manufacturer:text(data.manufacturer,100),fixture:text(data.fixture,150)||part.equipment,symptom:text(data.symptom,300),suspectedPart:text(data.suspectedPart,150),possibleFamily:text(data.possibleFamily,100),exactModel:explicit?exactModel:"",confidence,route:(text(data.route).toLowerCase().startsWith("exact") || /\b(?:order|replace with|replacement number is confirmed)\b/i.test(rawContext)) && explicit && !uncertainty && confidence>=0.85 ? "exact" : "ambiguous",constraints };
+  return { rawContext,manufacturer:text(data.manufacturer,100),fixture:text(data.fixture,150)||part.equipment,symptom:text(data.symptom,300),suspectedPart:text(data.suspectedPart,150),possibleFamily:text(data.possibleFamily,100),exactModel:explicit?exactModel:"",confidence,route:(text(data.route).toLowerCase().startsWith("exact") || /\b(?:order|replace with|replacement number is confirmed)\b/i.test(rawContext)) && explicit && !uncertainty && confidence>=0.85 ? "exact" : "ambiguous",constraints: dedupeConstraints(constraints) };
 }
 
 export function exactCandidate(part: JobPart) {
