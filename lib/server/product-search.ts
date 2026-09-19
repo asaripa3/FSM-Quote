@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { exaSearch, exaContents } from "@/lib/server/providers";
 import { containsIdentifier, evidenceOnPage, priceExcerpt, priceOnPage, successfulFreshContent, usableContent } from "@/lib/sourcing";
 import { checkSpecifications, rankSuppliers } from "@/lib/source-ranking";
+import { nonProductPageReason } from "@/lib/product-page";
 import type { ExaTrace, SourceOption, Constraint, ProductSearchResult, PipelineStage } from "@/lib/job";
 
 // Bound per-click cost: refresh at most six pages, with two per host for supplier diversity.
@@ -50,7 +51,7 @@ export async function searchProducts(body: ProductInput, signal?: AbortSignal, p
     for (const item of result.results ?? []) {
       try {
         const url = new URL(item.url), domain = url.hostname.replace(/^www\./,"");
-        if (!['http:','https:'].includes(url.protocol) || url.username || url.password || seen.has(url.href) || url.pathname === "/") continue;
+        if (!['http:','https:'].includes(url.protocol) || url.username || url.password || seen.has(url.href) || nonProductPageReason(url)) continue;
         if (domains.length && !domains.some(d=>domain===d || domain.endsWith(`.${d}`))) continue;
         if (/\.(pdf)(?:$|\?)/i.test(url.pathname) || /(?:^|\.)(ebay\.com|aliexpress\.com|temu\.com|etsy\.com|pinterest\.com|reddit\.com|youtube\.com|wikipedia\.org)$/.test(domain)) continue;
         if ((perDomain.get(domain) ?? 0) >= 2) continue;
