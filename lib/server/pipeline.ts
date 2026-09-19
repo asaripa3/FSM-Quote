@@ -1,5 +1,5 @@
 import type { Discovery, JobSettings, PipelineStage, ResolvedPart } from "@/lib/job";
-import { exactCandidate, toolCandidate } from "@/lib/intent";
+import { exactCandidate } from "@/lib/intent";
 import { parseInspection } from "./input";
 import { discoverParts } from "./discovery";
 import { searchProducts } from "./product-search";
@@ -17,17 +17,17 @@ export async function runQuotePipeline(input: {trade:string;note:string;settings
   // A description already resolved for this equipment and symptom does not need researching again:
   // the registry answers it and the run goes straight to pricing. Stale or under-specified records
   // return nothing, so the part falls through to discovery as usual.
-  const ambiguous: typeof job.parts=[]; const fromRegistry: string[]=[]; const tools: string[]=[];
+  const ambiguous: typeof job.parts=[]; const fromRegistry: string[]=[]; const tools: typeof job.parts=[];
   for(const part of job.parts.filter(p=>p.intent?.route!=="exact")){
-    // A tool the technician named is a commercial question, not a research one: they know what they
-    // need, they need somewhere to buy it. Researching "cartridge puller" in manufacturer documentation
-    // spends an Exa call to rediscover what the note already said.
-    if(part.kind==="tool"){ tools.push(part.id); direct.push(toolCandidate(part)); continue; }
     const record=await lookupPart(input.trade,part);
-    if(record){ creditHit(record); direct.push(candidateFromRecord(record,part)); fromRegistry.push(part.id); }
-    else ambiguous.push(part);
+    if(record){ creditHit(record); direct.push(candidateFromRecord(record,part)); fromRegistry.push(part.id); continue; }
+    // A named tool is the right product already; what it lacks is a model designation. Pricing refuses
+    // any page it cannot tie to an identifier, so sending "cartridge puller" straight to the supplier
+    // search produced a row that could never carry a price. It is researched too, but as a buying
+    // question against product pages rather than as a fault against manufacturer documentation.
+    if(part.kind==="tool") tools.push(part); else ambiguous.push(part);
   }
-  emit("intent_routed",{exact:exact.map(p=>p.id),registry:fromRegistry,tools,ambiguous:ambiguous.map(p=>p.id)});
+  emit("intent_routed",{exact:exact.map(p=>p.id),registry:fromRegistry,tools:tools.map(p=>p.id),ambiguous:ambiguous.map(p=>p.id)});
   if(fromRegistry.length) progress("resolving_part",`${fromRegistry.length} ${fromRegistry.length===1?"description was":"descriptions were"} resolved before for this equipment; reusing that part and pricing it now.`);
   let discovery: Discovery={parts:[],unresolved:[],pagesScanned:0,trace:[]};
   if(ambiguous.length){
@@ -42,6 +42,14 @@ export async function runQuotePipeline(input: {trade:string;note:string;settings
       const direct=await discoverParts(ambiguous,signal,false);
       if(direct.parts.length) discovery={...direct,trace:[...discovery.trace,...direct.trace],pagesScanned:discovery.pagesScanned+direct.pagesScanned};
     }
+  }
+  if(tools.length){
+    progress("resolving_part",`Exa is finding a purchasable model for ${tools.length} named ${tools.length===1?"tool":"tools"}.`);
+    const found=await discoverParts(tools,signal,false);
+    // Both passes number their candidates from one, and the interface keys selections by candidate id.
+    discovery={parts:[...discovery.parts,...found.parts.map(p=>({...p,id:`tool-${p.id}`}))],
+      unresolved:[...discovery.unresolved,...found.unresolved],
+      pagesScanned:discovery.pagesScanned+found.pagesScanned,trace:[...discovery.trace,...found.trace]};
   }
   const seen=new Set<string>();
   const parts=[...direct,...discovery.parts].filter(part=>{
@@ -77,5 +85,5 @@ export async function runQuotePipeline(input: {trade:string;note:string;settings
     }
   };
   await Promise.all([worker(),worker()]);
-  progress("complete",failed?`Research finished; ${failed} supplier ${failed===1?"search needs":"searches need"} a retry.`:parts.length?"Research complete. Choose the right candidate and confirm its fit and price.":"No supported candidate yet. Add the model or rating from the equipment plate.");
+  progress("complete",failed?`Research finished; ${failed} supplier ${failed===1?"search needs":"searches need"} a retry.`:parts.length?"Research complete. Choose the right candidate and confirm its fit and price.":"No supported candidate yet. Add the equipment model or part number.");
 }

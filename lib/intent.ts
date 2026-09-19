@@ -41,16 +41,3 @@ export function exactCandidate(part: JobPart) {
   const model = part.intent?.exactModel || part.sku;
   return {id:`exact-${part.id}`,partIds:[part.id],name:[part.intent?.manufacturer,model,part.intent?.suspectedPart].filter(Boolean).join(" ")||part.description,manufacturer:part.intent?.manufacturer||"",partNumber:model,sku:part.sku,reason:"This part number was explicitly requested in the note. Exa will check supplier pages for the same product; fit still needs your review.",evidence:part.intent?.rawContext||part.description,verified:false,sourceUrl:"",sourceLabel:"Technician note",supporting:[],searchQuery:[part.intent?.manufacturer,model,part.intent?.suspectedPart].filter(Boolean).join(" "),skuStatus:"unknown" as const,skuNote:"",route:"exact" as const,confidence:"high" as const,constraints:part.intent?.constraints||[],conflicts:[],questions:[]};
 }
-
-/** A tool the technician asked for by name: priced directly, never researched. */
-export function toolCandidate(part: JobPart) {
-  // The description names the tool ("puller tool for cartridge removal"); suspectedPart holds the part it
-  // acts on ("cartridge"), which would send the supplier search after the wrong product entirely.
-  const name = part.description || part.intent?.suspectedPart || "";
-  return {id:`tool-${part.id}`,partIds:[part.id],name,manufacturer:part.intent?.manufacturer||"",partNumber:part.sku,sku:part.sku,
-    reason:"The technician asked for this tool by name, so it is priced rather than researched.",
-    evidence:part.intent?.rawContext||part.description,verified:false,sourceUrl:"",sourceLabel:"Technician note",supporting:[],
-    searchQuery:part.query||[part.intent?.manufacturer,name].filter(Boolean).join(" "),
-    skuStatus:"unknown" as const,skuNote:"",route:"exact" as const,confidence:"high" as const,
-    constraints:part.intent?.constraints||[],conflicts:[],questions:[]};
-}

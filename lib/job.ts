@@ -63,3 +63,21 @@ export type PartIntent = {
 export type PipelineStage = "understanding_input" | "resolving_part" | "searching_products" | "validating_results" | "comparing_suppliers" | "complete";
 export type PipelineProgress = { stage: PipelineStage; message: string; partId?: string; query?: string; at: string };
 export type ProductSearchResult = { query: string; sources: SourceOption[]; trace: ExaTrace[] };
+
+/**
+ * The reported work this estimate does not price, and why.
+ *
+ * Quoting part of a job is ordinary: a technician may order one repair today and come back for the
+ * rest. Blocking the print until every fault is covered would refuse that, so the omission is
+ * recorded on the estimate instead, where a customer reading the total can see it. A fault counts as
+ * covered when a candidate answering it has been selected, whether or not other candidates for the
+ * same fault were left alone.
+ */
+export function uncoveredWork(job: ParsedJob | null, discovery: Discovery | null, isPicked: (candidateId: string) => boolean) {
+  if (!job) return [];
+  const covered = new Set((discovery?.parts ?? []).filter(r => isPicked(r.id)).flatMap(r => r.partIds));
+  return job.parts.filter(p => !covered.has(p.id)).map(p => ({
+    label: p.description,
+    reason: discovery?.unresolved.find(u => u.partId === p.id)?.reason ?? "No supplier option was selected for this item.",
+  }));
+}

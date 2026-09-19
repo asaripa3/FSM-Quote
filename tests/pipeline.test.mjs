@@ -188,3 +188,48 @@ test('a remembered part cannot answer for a different replacement number', async
       suspectedPart:'vacuum breaker sleeve',possibleFamily:'',exactModel:'',confidence:0.5,route:'ambiguous',constraints:[]}};
   assert.equal((await lookupPart('plumbing', flushometer))?.model, 'V-651-A');
 });
+
+test('work the estimate does not cover is recorded rather than blocking the print', async () => {
+  const { uncoveredWork } = await import('../lib/job.ts');
+  const job = {summary:'',equipment:'',laborHours:1,questions:[],parts:[
+    {id:'part-1',description:'shower cartridge',query:'',quantity:1,sku:'',equipment:''},
+    {id:'part-2',description:'escutcheon plate',query:'',quantity:1,sku:'',equipment:''},
+    {id:'part-3',description:'mixing valve body',query:'',quantity:1,sku:'',equipment:''}]};
+  const discovery = {parts:[{id:'r1',partIds:['part-1']},{id:'r2',partIds:['part-1']},{id:'r3',partIds:['part-2']}],
+    unresolved:[{partId:'part-3',reason:'No candidate with a supported catalogue number was found.'}],pagesScanned:0,trace:[]};
+
+  // One repair quoted, one left for a return visit, one never resolved: the estimate still prints and
+  // says so, rather than refusing until every reported fault is covered.
+  const excluded = uncoveredWork(job, discovery, id => id === 'r1');
+  assert.deepEqual(excluded.map(e => e.label), ['escutcheon plate','mixing valve body']);
+  assert.match(excluded[0].reason, /No supplier option was selected/);
+  assert.match(excluded[1].reason, /supported catalogue number/);
+
+  // Choosing one of two candidates for a fault covers that fault; the runner-up is not an omission.
+  assert.equal(uncoveredWork(job, discovery, id => id === 'r1' || id === 'r3').length, 1);
+  // A fully covered job records nothing.
+  assert.equal(uncoveredWork({...job, parts: job.parts.slice(0,1)}, discovery, () => true).length, 0);
+  assert.deepEqual(uncoveredWork(null, discovery, () => true), []);
+});
+
+test('excluded work reaches the printed estimate and paginates with it', async () => {
+  const { createQuotePdf } = await import('../lib/quote-pdf.ts');
+  const { TRADES, buildQuote } = await import('../lib/trades.ts');
+  const { PDFDocument } = await import('pdf-lib');
+  const pack = TRADES.plumbing;
+  const line = i => ({part:{id:`r${i}`,intent:`Item ${i}`,discoveryQuery:'q',discovery:{sku:`SKU-000${i}`,name:`Replacement cartridge assembly, item ${i}`,manufacturer:'Moen',reason:'',pagesScanned:6},compatibility:{verified:true,statement:'',evidence:'',sourceLabel:'',sourceUrl:''},productQuery:'q',listings:[]},
+    listing:{supplier:'supplyhouse.com',domain:'supplyhouse.com',url:'https://supplyhouse.com/x',price:42.5+i,badges:[],match:'compatible',stock:'In stock'},qty:2});
+  const build = async (n, exclusions) => {
+    const lines = Array.from({length:n},(_,i)=>line(i+1));
+    const quote = buildQuote(lines.map(l=>l.listing.price),lines.map(l=>l.qty),18,2,150);
+    const demo = {...pack.demo,customer:'Harborview Property Group',site:'214 Mill Street',laborHours:2,parts:lines.map(l=>l.part)};
+    return PDFDocument.load(await createQuotePdf({...pack,demo},lines,quote,'Northside Plumbing',exclusions));
+  };
+  const long = {label:'mixing valve body',reason:'No candidate with a supported catalogue number was found. Add the equipment model or part number, or quote this item as non-catalogue material.'};
+  // A short estimate keeps its exclusions on the same page.
+  assert.equal((await build(1,[long])).getPageCount(), 1);
+  // Enough of them, and the section breaks like everything else rather than printing over the footer.
+  assert.equal((await build(3,Array.from({length:8},(_,i)=>({...long,label:`item ${i+1}`})))).getPageCount(), 2);
+  // Nothing excluded means no section and no extra page.
+  assert.equal((await build(3,[])).getPageCount(), 1);
+});

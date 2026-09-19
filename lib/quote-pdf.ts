@@ -1,10 +1,23 @@
-import { PDFDocument, StandardFonts, rgb, type PDFPage } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import { buildQuote, money, type TradePack } from "./trades";
 
 export type QuoteLine = { part: TradePack["demo"]["parts"][number]; listing: TradePack["demo"]["parts"][number]["listings"][number]; qty: number };
+/** Reported work this estimate does not cover, and why. */
+export type QuoteExclusion = { label: string; reason: string };
 const ascii = (s: string) => s.replace(/µ/g, "u").replace(/[—–]/g, "-").replace(/[’‘]/g, "'").replace(/[“”]/g, '"').replace(/[^\x20-\x7E]/g, "");
 
 const WIDTH = 595.28, HEIGHT = 841.89;
+/** Break a string into lines that fit a column, without emitting an empty line for an over-long word. */
+function wrap(text: string, font: PDFFont, size: number, width: number) {
+  const out: string[] = [];
+  let row = "";
+  for (const word of ascii(text).split(" ")) {
+    if (row && font.widthOfTextAtSize(`${row} ${word}`, size) > width) { out.push(row); row = word; }
+    else row = row ? `${row} ${word}` : word;
+  }
+  if (row) out.push(row);
+  return out;
+}
 /**
  * Nothing is drawn below this on a page carrying items. The closing block (totals, supplier
  * references, the legal footer) is fixed to the bottom of the last page, so an estimate that runs
@@ -12,7 +25,7 @@ const WIDTH = 595.28, HEIGHT = 841.89;
  */
 const FLOOR = 165;
 
-export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote: ReturnType<typeof buildQuote>, company = "") {
+export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote: ReturnType<typeof buildQuote>, company = "", exclusions: QuoteExclusion[] = []) {
   const doc = await PDFDocument.create();
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -56,13 +69,7 @@ export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote:
   startPage("first");
   for (const line of lines) {
     // Current trade packs have short descriptions; wrapping keeps future copy inside its column.
-    const rows: string[] = [];
-    let row = "";
-    for (const word of ascii(line.part.discovery.name).split(" ")) {
-      if (regular.widthOfTextAtSize(`${row} ${word}`, 10) > 310) { rows.push(row); row = word; }
-      else row = row ? `${row} ${word}` : word;
-    }
-    if (row) rows.push(row);
+    const rows = wrap(line.part.discovery.name, regular, 10, 310);
     // Measure the whole item before starting it, so a line never straddles a page break.
     if (y - (16 * rows.length + 62) < FLOOR) startPage("items");
     write(line.part.discovery.sku, 48, y, 12, bold);
@@ -84,6 +91,24 @@ export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote:
   y -= 72;
   write("SUPPLIER REFERENCES", 48, y, 9, mono, muted);
   for (const line of lines) { y -= 14; write(`${line.part.discovery.sku} - ${line.listing.domain}`, 48, y, 10); }
+  // Work the technician reported but this estimate does not price is stated on the estimate itself.
+  // A customer reading only the total would otherwise have no way to know a repair was left out, and
+  // the alternative - refusing to print until every fault is covered - would stop legitimate partial
+  // quotes. This section paginates on its own, since the reasons are sentences rather than labels.
+  if (exclusions.length) {
+    // The closing text may sit closer to the footer rule than an item block may, because it is the
+    // last thing on the page and nothing follows it.
+    const CLOSING_FLOOR = 152;
+    const heading = (suffix = "") => { y -= 20; write(`NOT INCLUDED IN THIS ESTIMATE${suffix}`, 48, y, 9, mono, muted); y -= 4; };
+    if (y - 40 < CLOSING_FLOOR) startPage("closing");
+    heading();
+    for (const excluded of exclusions) {
+      const rows = wrap(`${excluded.label} - ${excluded.reason}`, regular, 8.5, 499);
+      if (y - (11 * rows.length + 5) < CLOSING_FLOOR) { startPage("closing"); heading(" (continued)"); }
+      for (const text of rows) { y -= 11; write(text, 48, y, 8.5, regular, muted); }
+      y -= 5;
+    }
+  }
   rule(139);
   write("ESTIMATE - NOT A PAYMENT RECEIPT", 48, 118, 9, mono, blue);
   write("Supplier prices are subject to change. Confirm final pricing and fit before ordering.", 48, 99, 9, regular, muted);
@@ -96,8 +121,8 @@ export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote:
   return doc.save();
 }
 
-export async function downloadQuotePdf(pack: TradePack, lines: QuoteLine[], quote: ReturnType<typeof buildQuote>, company = "") {
-  const bytes = await createQuotePdf(pack, lines, quote, company);
+export async function downloadQuotePdf(pack: TradePack, lines: QuoteLine[], quote: ReturnType<typeof buildQuote>, company = "", exclusions: QuoteExclusion[] = []) {
+  const bytes = await createQuotePdf(pack, lines, quote, company, exclusions);
   const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
   const link = document.createElement("a");
   link.href = url; link.download = `FieldQuote-${pack.id}-estimate.pdf`;
