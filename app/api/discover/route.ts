@@ -1,29 +1,18 @@
 import { exaSearch, safeError, sameOrigin } from "@/lib/server/providers";
-import { containsIdentifier, evidenceOnPage } from "@/lib/sourcing";
+import { containsIdentifier, evidenceAnchored, evidenceGrounding, partIdentifier } from "@/lib/sourcing";
 import { isTradeId } from "@/lib/trades";
 import type { Discovery, ExaTrace, ResolvedPart } from "@/lib/job";
 export const runtime = "nodejs";
 
 const EXCERPT = 12000;
+/** Trade vocabulary that says nothing about which fixture this is, so its absence from the corpus proves nothing. */
+const COMMON_EQUIPMENT = /^(?:water|closet|urinal|valve|flush|flushometer|heater|rooftop|condenser|motor|panel|breaker|circuit|system|unit|tank|pipe|piping|drain|line|supply|exposed|concealed|manual|electric|commercial|assembly|kit|parts?|repair|replacement|double|single|pole)$/;
 type Incoming = { id: string; description: string; equipment: string; sku: string };
 type Source = { url: string; title: string; domain: string; text: string; tokens: Set<string> };
 
 const flatten = (v: string) => v.toLowerCase().replace(/[‘’“”]/g, "'").replace(/\s+/g, " ").trim();
 const tokens = (v: string) => flatten(v).match(/[a-z0-9][a-z0-9./-]{2,}/g) ?? [];
 /** Exa returns the quoted words; strip any framing the extraction wraps around them before scoring. */
-/**
- * A required identifier field gets filled with a placeholder rather than left empty ("N/A (Generic)",
- * "Various (Generic/Pre-engineered)"). Enumerating every evasion is unwinnable, so require the value to
- * look like a catalogue part number instead: it carries a digit, no parentheses and at most one space.
- * Validated against real numbers (A-1101-A, QS-50-H, 25/5DVR, MAR 12905, S1-02440907000) and refusals.
- */
-const VAGUE = /\b(?:n\/?a|none|null|unknown|tbd|various|multiple|generic|assorted|pre-?engineered|placeholder|standard|typical)\b/i;
-const identifier = (v: unknown) => {
-  const id = String(v ?? "").trim();
-  if (id.length < 3 || id.length > 40 || VAGUE.test(id) || id.includes("(") || id.includes(")")) return "";
-  if (!/\d/.test(id) || id.split(" ").length > 2) return "";
-  return /^[A-Za-z0-9][A-Za-z0-9 ./_-]*$/.test(id) ? id : "";
-};
 const unwrapQuote = (v: string) => v.trim()
   .replace(/^(?:from\s+)?sources?\s*\[?\d+\]?\s*[:,-]?\s*/i, "")
   .replace(/^["'“‘]+|["'”’]+$/g, "")
@@ -86,11 +75,13 @@ export async function POST(request: Request) {
     for (const part of parts) {
       const t = tokens(part.equipment || part.description);
       if (t.length < 2) continue;
-      // Token coverage alone, measured: real fixtures score 0.80-1.00 and invented ones 0.20-0.67. A
-      // supplier page sells the kit, not the fixture, so the fixture's own model number ("Royal 111")
-      // is frequently absent from every page — demanding it rejects real equipment. Whether the cited
-      // part actually fits is settled by the evidence check below, not by token presence here.
-      if (t.filter(x=>corpus.has(x)).length / t.length < 0.75) ungrounded.set(part.id, `The retrieved pages never mention ${part.equipment || part.description}, so no part could be confirmed for it. Check the model designation on the equipment plate.`);
+      // Coverage alone is gameable: "Sloan Imperial 9000 hyperflush water closet" scores well because
+      // sloan/water/closet are everywhere, while the words that make it fictional carry no weight. So
+      // every distinctive word must also appear in the corpus. Model numbers stay exempt: a supplier page
+      // sells the kit, not the fixture, so "Royal 111" is often on no page, whereas an invented word like
+      // "hyperflush" or "quantum" is on none either — the difference is that one of them is a number.
+      const invented = t.filter(x=>/^[a-z]{5,}$/.test(x) && !COMMON_EQUIPMENT.test(x) && !corpus.has(x));
+      if (t.filter(x=>corpus.has(x)).length / t.length < 0.75 || invented.length) ungrounded.set(part.id, `The retrieved pages never mention ${part.equipment || part.description}, so no part could be confirmed for it. Check the model designation on the equipment plate.`);
     }
 
     const ids = new Set(parts.map(p=>p.id));
@@ -101,16 +92,19 @@ export async function POST(request: Request) {
       const name = String(raw.name ?? "").slice(0,200);
       if (!partIds.length || !name) continue;
       const evidence = unwrapQuote(String(raw.evidence ?? "")).slice(0,700);
-      const partNumber = identifier(raw.partNumber), sku = identifier(raw.sku);
+      const partNumber = partIdentifier(raw.partNumber), sku = partIdentifier(raw.sku);
       const identifiers = [partNumber, sku].filter(Boolean);
       // Without a real part number or SKU there is nothing an estimator can order, whatever the pages said.
       if (!identifiers.length) continue;
-      const source = sources.find(page=>evidenceOnPage(evidence,page.text)
-        && identifiers.some(id=>containsIdentifier(evidence,id) || containsIdentifier(page.text,id))) ?? sources[0];
-      // Text presence is weaker than engineering compatibility. The UI must call this evidence, never fit verification.
-      // The quote must be verbatim on the cited page, and that same page must carry the part number.
-      // Requiring the number inside the excerpt itself fails legitimate contents lists, which do not repeat it.
-      const verified = evidenceOnPage(evidence,source.text) && identifiers.some(id=>containsIdentifier(evidence,id) || containsIdentifier(source.text,id));
+      // Credit the page that best supports the quote, then judge it. A faithful excerpt can carry one
+      // re-typed glyph or a span from a sibling page, so most of it must be on the page rather than all
+      // of it; fabricated evidence is on no page at all and scores zero.
+      const source = sources.reduce((best,next)=> evidenceGrounding(evidence,next.text) > evidenceGrounding(evidence,best.text) ? next : best, sources[0]);
+      // Two independent things must hold: a substantial span of the quote is verbatim on that page, and
+      // that page names the part. Either alone is weak; together they rule out an invented quote and an
+      // invented part, without demanding that every connective in the excerpt be word-perfect.
+      const verified = evidenceAnchored(evidence,source.text)
+        && identifiers.some(id=>containsIdentifier(source.text,id) || containsIdentifier(evidence,id));
       const supporting = verified ? [{ url: source.url, label: source.domain }] : [];
       // The premise is that nothing reaches the estimator on the model's word alone. A candidate whose quote
       // cannot be located on a retrieved page is not shown as a part: it becomes an unresolved fault with a

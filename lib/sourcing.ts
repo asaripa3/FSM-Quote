@@ -11,8 +11,44 @@ export function containsIdentifier(text: string, identifier: string) {
 }
 
 /** Ordered excerpts may skip table columns, but may not invent or reorder the words within an excerpt. */
+const GAP = /\s*(?:\.{3}|\u2026|\u22ef|[\u2022\u00b7]{2,}|-{3,})\s*/;
+
+/**
+ * How much of a quote is genuinely on the page, weighted by characters.
+ *
+ * All-or-nothing matching rejects faithful quotes: one paraphrased connective, a trademark glyph the
+ * extraction re-typed, or a span taken from a sibling page sinks the whole excerpt. Fabricated evidence
+ * behaves differently — none of it is anywhere. Measured on live pages: real quotes score 1.00, a quote
+ * carrying one foreign span scores around 0.5, and an invented one scores 0.00.
+ */
+export function evidenceGrounding(evidence: string, text: string) {
+  const segments = normalizeEvidence(evidence).split(GAP).map(v => v.trim()).filter(v => v.length >= 5);
+  if (!segments.length) return 0;
+  const page = normalizeEvidence(text);
+  let found = 0, total = 0;
+  for (const segment of segments) {
+    total += segment.length;
+    if (page.includes(segment)) found += segment.length;
+  }
+  return total ? found / total : 0;
+}
+
+/**
+ * Whether a substantial span of the quote is verbatim on the page.
+ *
+ * A fraction-of-the-whole threshold punishes the wrong thing: an extraction that quotes three real spans
+ * and one loose connective scores about 0.5 and is discarded even though its part number is on the page.
+ * Fabrication looks different — no span of any length is anywhere. So anchor on the longest real span
+ * instead, and let the identifier check carry the question of whether it is the right product.
+ */
+export function evidenceAnchored(evidence: string, text: string, minimum = 25) {
+  const page = normalizeEvidence(text);
+  return normalizeEvidence(evidence).split(GAP).map(v => v.trim())
+    .some(segment => segment.length >= minimum && page.includes(segment));
+}
+
 export function evidenceOnPage(evidence: string, text: string) {
-  const segments = normalizeEvidence(evidence).split(/\s*(?:\.{3}|…)\s*/).filter(Boolean);
+  const segments = normalizeEvidence(evidence).split(GAP).filter(Boolean);
   if (!segments.length || segments.some(s => s.length < 5)) return false;
   const page = normalizeEvidence(text);
   let cursor = 0;
@@ -57,4 +93,23 @@ export function priceExcerpt(evidence: string, price: number) {
   const line = clean.split(/\n+/).map(l => l.trim()).filter(Boolean)
     .find(l => l.includes(amount) || l.includes(Number(price).toLocaleString("en-US", {minimumFractionDigits:2})));
   return (line ?? clean.replace(/\n+/g, " ")).replace(/\s+/g, " ").trim().slice(0, 180);
+}
+
+const VAGUE = /\b(?:n\/?a|none|null|unknown|tbd|various|multiple|generic|assorted|pre-?engineered|placeholder|standard|typical)\b/i;
+/**
+ * Pull a catalogue part number out of an identifier field. Extractions qualify them
+ * ("A-1101-A (example for 1.6 gpf)"), and rejecting the whole string over its parenthetical discards a
+ * real part number. A part number carries a digit and no vague wording; "Generic/Pre-engineered" has none.
+ */
+export function partIdentifier(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw.length > 120 || VAGUE.test(raw)) return "";
+  const candidates = raw.split(/[(),;]/)[0].trim().split(/\s+/);
+  for (let size = Math.min(2, candidates.length); size >= 1; size--) {
+    for (let i = 0; i + size <= candidates.length; i++) {
+      const token = candidates.slice(i, i + size).join(" ");
+      if (token.length >= 3 && token.length <= 40 && /\d/.test(token) && /^[A-Za-z0-9][A-Za-z0-9 ./_-]*$/.test(token)) return token;
+    }
+  }
+  return "";
 }

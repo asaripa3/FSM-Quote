@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { containsIdentifier, evidenceOnPage, priceOnPage, successfulFreshContent, usableContent, priceExcerpt } from '../lib/sourcing.ts';
+import { containsIdentifier, evidenceOnPage, priceOnPage, successfulFreshContent, usableContent, priceExcerpt, partIdentifier, evidenceGrounding, evidenceAnchored } from '../lib/sourcing.ts';
 
 test('a cheaper amount cannot be supported by a substring of another price', () => {
   assert.equal(priceOnPage(41.98, 'Price $141.98 USD each', 'Price $141.98 USD each'), false);
@@ -49,4 +49,33 @@ test('a displayed price excerpt drops interleaved financing copy', () => {
   assert.equal(shown.includes('66.96'), true);
   assert.equal(shown.includes('41.96'), false);
   assert.equal(priceExcerpt('Price: 70.43 USD.', 70.43), 'Price: 70.43 USD.');
+});
+
+test('a qualified identifier still yields its part number', () => {
+  assert.equal(partIdentifier('A-1101-A (example for 1.6 gpf)'), 'A-1101-A');
+  assert.equal(partIdentifier('3301070 (example for 1.6 gpf)'), '3301070');
+  assert.equal(partIdentifier('Jard 12788'), 'Jard 12788');
+  assert.equal(partIdentifier('QO220CP'), 'QO220CP');
+  assert.equal(partIdentifier('Various (Generic/Pre-engineered)'), '');
+  assert.equal(partIdentifier('N/A (Generic)'), '');
+  assert.equal(partIdentifier('Generic/Pre-engineered'), '');
+});
+
+test('grounding scores a quote by how much of it is on the page', () => {
+  const page = 'ROYAL Performance Kit includes dual filtered diaphragm assembly, handle repair kit with triple seal packing, high back pressure vacuum breaker repair kit.';
+  // Faithful, including a bullet gap marker the page itself does not use.
+  assert.equal(evidenceGrounding('dual filtered diaphragm assembly ••• high back pressure vacuum breaker repair kit', page), 1);
+  // Invented wording is nowhere on the page.
+  assert.equal(evidenceGrounding('This 45+5 MFD dual cap powers both your compressor and condenser fan motor', page), 0);
+  // Half real, half lifted from elsewhere.
+  const mixed = evidenceGrounding('dual filtered diaphragm assembly ... ships free from our Ohio warehouse today', page);
+  assert.equal(mixed > 0.3 && mixed < 0.8, true);
+});
+
+test('anchoring accepts a partly loose quote but never an invented one', () => {
+  const page = 'Model #QO220CP. Compatible with Square D QO electrical panels. 20-amp, double pole circuit breaker rated for 240 volts.';
+  assert.equal(evidenceAnchored('Model #QO220CP ... Compatible with Square D QO electrical panels ... ships today from our warehouse', page), true);
+  assert.equal(evidenceAnchored('This 45+5 MFD dual cap powers both your compressor and condenser fan motor', page), false);
+  // Too short to prove anything on its own.
+  assert.equal(evidenceAnchored('Model #QO220CP', page), false);
 });
