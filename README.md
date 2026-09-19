@@ -40,9 +40,9 @@ Toggle **Exa** off in the workspace header to see the same job with every Exa co
 
 A single Next.js app. The Exa work runs in route handlers, which deploy as serverless functions, so there is no separate backend to run.
 
-- `app/api/parse` turns the note into reported faults.
-- `app/api/discover` resolves those faults into orderable parts with Exa.
-- `app/api/source` prices a resolved part across suppliers with Exa.
+- `app/api/quote-stream` runs the whole job and streams each stage back: note to faults, faults to parts with Exa, parts to priced supplier options.
+- `app/api/source` re-prices a single resolved part when you retry one candidate.
+- `app/api/transcribe` turns a recording or a microphone take into a note.
 - `lib/` holds the trade packs, quote maths, and server-only provider calls.
 
 ## Run it

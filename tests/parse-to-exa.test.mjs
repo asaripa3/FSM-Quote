@@ -28,7 +28,7 @@ process.env.LIVEKIT_API_SECRET ||= "test-secret";
 process.env.EXA_API_KEY ||= "test-exa";
 
 const { POST: parsePost } = await import("../app/api/parse/route.ts");
-const { POST: discoverPost } = await import("../app/api/discover/route.ts");
+const { discoverParts } = await import("../lib/server/discovery.ts");
 
 const CORE_NOTE = `Men's restroom, second floor. Sloan Royal 111 water closet keeps running after flush — the diaphragm looks worn and the vacuum breaker sleeve is cracked. The Regal urinal beside it is weeping at the diaphragm too. Replace both. Work order says we ordered 3301150 for the closet last time. About 45 minutes labor.`;
 
@@ -197,13 +197,8 @@ test("discover builds one Exa search query from parsed faults, not from the LLM 
     throw new Error(`unexpected fetch ${href}`);
   };
 
-  const res = await discoverPost(new Request("http://localhost/api/discover", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ trade: "plumbing", parts: incoming }),
-  }));
-  const discovery = await res.json();
-  assert.equal(res.status, 200, discovery.error);
+  // The pipeline is the only caller of discovery, so the contract is asserted against it directly.
+  const discovery = await discoverParts(incoming);
   assert.equal(exaCalls.length, 1);
   assert.equal(exaCalls[0].query, expectedQuery);
   assert.equal(exaCalls[0].type, "auto");
@@ -247,5 +242,5 @@ test("live LiveKit model decomposes the long note into Exa-ready faults", async 
   console.log("laborHours:", parsed.laborHours);
   console.log("parts:", parsed.parts.map((p) => ({ id: p.id, description: p.description, sku: p.sku, query: p.query })));
   console.log("questions:", parsed.questions);
-  console.log("Exa identify query that /api/discover would send:\n ", exaQuery);
+  console.log("Exa identify query that discovery would send:\n ", exaQuery);
 });
