@@ -22,7 +22,7 @@ export function Workflow({pack}:{pack:TradePack}) {
  const [events,setEvents]=useState<PipelineProgress[]>([]),[routes,setRoutes]=useState<{exact:number;ambiguous:number}|null>(null);
  const runController=useRef<AbortController|null>(null);
  const [quantities,setQuantities]=useState<Record<string,number>>({});
- const [showExa,setShowExa]=useState(true),[trace,setTrace]=useState<ExaTrace[]>([]);
+ const [showExa,setShowExa]=useState(false),[trace,setTrace]=useState<ExaTrace[]>([]);
  const requests=useRef<Set<AbortController>>(new Set());
  const settingsKey=`fieldquote-settings-v1-${pack.id}`;
  useEffect(()=>{const pending=requests.current;const timer=setTimeout(()=>{try{const raw=localStorage.getItem(settingsKey);if(raw){const value=JSON.parse(raw);if(validAmount(value.laborRate)&&validAmount(value.markupPercent,1000)&&typeof value.company==="string"&&typeof value.supplierDomains==="string"&&typeof value.region==="string")setSettings(value);}}catch{/* Storage is optional. */}},0);return()=>{clearTimeout(timer);pending.forEach(c=>c.abort());};},[settingsKey,defaultDomains]);
@@ -75,8 +75,7 @@ export function Workflow({pack}:{pack:TradePack}) {
     <NoteReplay note={note} job={job} collapsed={!!discovery&&!busy}/>
     {stage==="researching"&&<p className="search-status" role="status"><span className="pulse-dot"/>Reading manufacturer and distributor pages with Exa to find what actually fixes this…</p>}
     {!discovery&&job.questions.length>0&&<div className="review-questions"><strong>Check before ordering</strong><ul>{job.questions.map(q=><li key={q}>{q}</li>)}</ul></div>}
-    {discovery&&<div className={showExa?"exa-on":"exa-off"}>
-     {showExa?<>
+     {discovery&&<div className={showExa?"exa-on":"exa-off"}>
       {discovery.parts.some(r=>r.partIds.length>1&&r.verified)&&<p className="consolidated-note">One kit below already covers what a second line item would have duplicated.</p>}
       {discovery.parts.length===0&&<p className="empty-message">No orderable part could be confirmed from the retrieved pages. Add the model designation from the equipment plate and try again.</p>}
       <PartsCart discovery={discovery} searches={searches} picks={picks} quantities={quantities}
@@ -86,11 +85,10 @@ export function Workflow({pack}:{pack:TradePack}) {
        faultLabel={id=>job.parts.find(p=>p.id===id)?.description||""}/>
       {discovery.unresolved.length>0&&<div className="unresolved-block"><strong>Not confirmed from the retrieved pages</strong><ul>{discovery.unresolved.map(u=><li key={u.partId}><em>{job.parts.find(p=>p.id===u.partId)?.description||u.partId}</em> — {u.reason}</li>)}</ul></div>}
       <button className="text-button add-part" onClick={research} disabled={busy}>↻ Research these parts again</button>
-     </>:<NoteOnlyView parts={job.parts}/>}
-     <ExaLegend/>
+      {showExa&&<ExaLegend/>}
     </div>}</div></section>:<div className="workshop-empty"><Image src={pack.mascot} alt="" width={pack.mascotW} height={pack.mascotH} unoptimized/><div><h3>No after-hours replay session.</h3><p>Your note becomes an editable parts list. You check the sources and set the price.</p></div></div>}
   </div>{discovery&&discovery.parts.length>0&&<aside className="estimate-panel"><header><span className="micro-label">YOUR ESTIMATE</span><span>▤</span></header><div className="estimate-body"><h2>{customer||"Your customer"}</h2><p>{site||"Add the job location"}</p><div className="estimate-lines">{!lines.length?<p className="empty-message">Your selected parts will appear here.</p>:lines.map(line=>{const pick=picks[line.part.id];return <div className="estimate-line" key={line.part.id}><strong>{line.part.discovery.name}</strong><a href={pick.source.url} target="_blank" rel="noopener noreferrer">{pick.source.domain} ↗</a><label>Unit cost (USD)<input aria-label={`Unit cost for ${line.part.discovery.name}`} type="number" min="0" max="100000" step=".01" value={pick.price} onChange={e=>setPicks(s=>({...s,[line.part.id]:{...s[line.part.id],price:Number(e.target.value),confirmed:false}}))}/></label><div className="line-extension"><span>{line.qty} × {money(pick.price)}</span><strong>{money(line.qty*pick.price)}</strong></div>{pick.price!==pick.source.price&&<small>Manually entered price — confirm against source.</small>}<label className="confirm-source"><input type="checkbox" checked={pick.confirmed} onChange={e=>setPicks(s=>({...s,[line.part.id]:{...s[line.part.id],confirmed:e.target.checked}}))}/><span>I checked fit, pack quantity, and price.</span></label></div>;})}</div>
-   <div className="pricing-inputs"><label>Labor hours<input type="number" min="0" max="1000" step=".25" value={hours} onChange={e=>setHours(Number(e.target.value))}/></label><label>Hourly rate ($)<input type="number" min="0" max="100000" step=".01" value={settings.laborRate} onChange={e=>setSettings(s=>({...s,laborRate:Number(e.target.value)}))}/></label><label>Parts markup (%)<input type="number" min="0" max="1000" step=".1" value={settings.markupPercent} onChange={e=>setSettings(s=>({...s,markupPercent:Number(e.target.value)}))}/></label></div><dl className="estimate-totals"><div><dt>Parts</dt><dd>{money(quote.partsSubtotal)}</dd></div><div><dt>Parts markup</dt><dd>{money(quote.markup)}</dd></div><div><dt>Labor</dt><dd>{money(quote.labor)}</dd></div><div className="estimate-grand"><dt>Estimated total</dt><dd>{money(quote.total)}</dd></div></dl><button className="primary-button" disabled={!canPrint} onClick={()=>setQuoteOpen(true)}>Print estimate <span>↗</span></button><p className="estimate-hint">{!customer.trim()?"Add a customer name to create your estimate.":!allConfirmed?"Choose candidates and confirm their fit and price before printing.":"Ready to review and download as PDF."}</p>{trace.length>0&&showExa&&<ExaRunTrace trace={trace}/>}<p className="estimate-footnote">Tax and shipping excluded. Check the supplier page before ordering. Markup applies to parts only.</p></div></aside>}</div></div>
+   <div className="pricing-inputs"><label>Labor hours{job?.laborRange&&<span className="stated-range">{job.laborRange.min===job.laborRange.max?`note says ${job.laborRange.min} hr`:`note says ${job.laborRange.min}–${job.laborRange.max} hr`}</span>}<input type="number" min="0" max="1000" step=".25" value={hours} onChange={e=>setHours(Number(e.target.value))}/></label><label>Hourly rate ($)<input type="number" min="0" max="100000" step=".01" value={settings.laborRate} onChange={e=>setSettings(s=>({...s,laborRate:Number(e.target.value)}))}/></label><label>Parts markup (%)<input type="number" min="0" max="1000" step=".1" value={settings.markupPercent} onChange={e=>setSettings(s=>({...s,markupPercent:Number(e.target.value)}))}/></label></div><dl className="estimate-totals"><div><dt>Parts</dt><dd>{money(quote.partsSubtotal)}</dd></div><div><dt>Parts markup</dt><dd>{money(quote.markup)}</dd></div><div><dt>Labor</dt><dd>{money(quote.labor)}</dd></div><div className="estimate-grand"><dt>Estimated total</dt><dd>{money(quote.total)}</dd></div></dl><button className="primary-button" disabled={!canPrint} onClick={()=>setQuoteOpen(true)}>Print estimate <span>↗</span></button><p className="estimate-hint">{!customer.trim()?"Add a customer name to create your estimate.":!allConfirmed?"Choose candidates and confirm their fit and price before printing.":"Ready to review and download as PDF."}</p>{trace.length>0&&showExa&&<ExaRunTrace trace={trace}/>}<p className="estimate-footnote">Tax and shipping excluded. Check the supplier page before ordering. Markup applies to parts only.</p></div></aside>}</div></div>
  {showSettings&&<SettingsDialog initial={settings} trade={pack.name} onClose={()=>setShowSettings(false)} onSave={value=>{setSettings(value);setShowSettings(false);try{localStorage.setItem(settingsKey,JSON.stringify(value));setSaved(true);}catch{setError("Settings apply to this job, but browser storage is unavailable.");}}}/>}
  {quoteOpen&&<ReceiptPrinter pack={quotePack} lines={lines} quote={quote} company={settings.company} onClose={()=>setQuoteOpen(false)}/>}
  </div>;
@@ -100,15 +98,6 @@ function ToggleControl({label,enabled,onToggle}:{label:string;enabled:boolean;on
  return <button type="button" role="switch" aria-checked={enabled} className={`exa-toggle ${enabled?"on":""}`} onClick={onToggle}><span className="exa-toggle-label">{label}</span><span className="exa-toggle-track"><span className="exa-toggle-knob"/></span></button>;
 }
 
-/** What the parsed note gives you on its own, with every Exa contribution withheld. */
-function NoteOnlyView({parts}:{parts:{id:string;description:string;quantity:number;sku:string;equipment:string}[]}) {
- if (!parts.length) return <p className="empty-message">The note did not name any replacement parts.</p>;
- return <div className="note-only">{parts.map((part,index)=><div className="note-only-row" key={part.id}>
-  <span className="note-only-index">FAULT {String(index+1).padStart(2,"0")}</span>
-  <div><strong>{part.description}</strong><p>{part.equipment||"Equipment not stated"} · qty {part.quantity} · {part.sku?`work-order number ${part.sku}`:"no part number"}</p></div>
-  <span className="note-only-gap">no supplier · no price</span>
- </div>)}</div>;
-}
 
 function ExaLegend() {
  return <div className="exa-legend"><span className="exa-legend-title">Legend</span>
