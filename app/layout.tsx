@@ -5,7 +5,7 @@ const geistSans = localFont({ src: "../public/fonts/geist.woff2", variable: "--f
 const geistMono = localFont({ src: "../public/fonts/geist-mono.woff2", variable: "--font-geist-mono", display: "swap" });
 
 export const metadata: Metadata = {
-  title: "FieldQuote — Less paperwork. Faster quotes.",
+  title: "Exa x FieldQuote",
   description:
     "An Exa-powered parts-intelligence layer for field-service businesses. Technician inspection notes become verified replacement parts, live supplier options and quote-ready line items.",
 };

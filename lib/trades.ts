@@ -105,6 +105,12 @@ export type TradePack = {
   };
 };
 
+/**
+ * Retailers every trade can buy from. Measured against Exa: these carry the product but often render the
+ * price client-side, so each trade adds supply houses that publish prices in the page itself.
+ */
+const COMMON_SUPPLIERS = ["amazon.com", "homedepot.com", "lowes.com"];
+
 export const TRADES: Record<TradeId, TradePack> = {
   /* ------------------------------------------------------------------ */
   plumbing: {
@@ -119,7 +125,7 @@ export const TRADES: Record<TradeId, TradePack> = {
     blurb: "Flushometers, faucets, mixing valves and the repair kits that keep them in service.",
     config: {
       trustedManufacturers: ["Sloan", "Kohler", "Moen", "Zurn", "Chicago Faucets"],
-      allowedDomains: ["homedepot.com", "lowes.com", "amazon.com"],
+      allowedDomains: [...COMMON_SUPPLIERS, "qualityplumbingsupply.com", "fwwebb.com", "supplyhouse.com"],
       compatibilityFields: ["manufacturer", "model", "part_number", "size", "flow_rate"],
       preferredSuppliers: ["Ferguson", "Local Plumbing Supply", "Grainger"],
       markupPercent: 30,
@@ -216,7 +222,7 @@ export const TRADES: Record<TradeId, TradePack> = {
     blurb: "Rooftop units, air handlers and the capacitors, contactors and motors inside them.",
     config: {
       trustedManufacturers: ["Carrier", "Trane", "Lennox", "Goodman", "York"],
-      allowedDomains: ["homedepot.com", "lowes.com", "amazon.com"],
+      allowedDomains: [...COMMON_SUPPLIERS, "supplyhouse.com", "northamericahvac.com", "tophvacparts.com"],
       compatibilityFields: ["manufacturer", "model", "voltage", "microfarads", "horsepower", "refrigerant_type"],
       preferredSuppliers: ["Johnstone Supply", "Ferguson HVAC", "Grainger"],
       markupPercent: 30,
@@ -282,7 +288,7 @@ export const TRADES: Record<TradeId, TradePack> = {
     blurb: "Load centers, breakers and disconnects — where series compatibility is the whole job.",
     config: {
       trustedManufacturers: ["Square D", "Eaton", "Siemens", "GE"],
-      allowedDomains: ["homedepot.com", "lowes.com", "amazon.com"],
+      allowedDomains: [...COMMON_SUPPLIERS, "platt.com", "zoro.com", "gordonelectricsupply.com"],
       compatibilityFields: ["manufacturer", "series", "amperage", "poles", "voltage"],
       preferredSuppliers: ["Graybar", "Rexel", "Grainger"],
       markupPercent: 28,
@@ -337,7 +343,7 @@ export const TRADES: Record<TradeId, TradePack> = {
 
 export const TRADE_LIST = [TRADES.plumbing, TRADES.hvac, TRADES.electrical];
 
-export const isTradeId = (v: string): v is TradeId => v in TRADES;
+export const isTradeId = (v: unknown): v is TradeId => typeof v === "string" && Object.hasOwn(TRADES, v);
 
 export const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD" });

@@ -1,32 +1,29 @@
 import { exaSearch, safeError, sameOrigin } from "@/lib/server/providers";
+import { containsIdentifier, evidenceOnPage } from "@/lib/sourcing";
 import { isTradeId } from "@/lib/trades";
 import type { Discovery, ExaTrace, ResolvedPart } from "@/lib/job";
 export const runtime = "nodejs";
 
-const EXCERPT = 2600;
+const EXCERPT = 12000;
 type Incoming = { id: string; description: string; equipment: string; sku: string };
 type Source = { url: string; title: string; domain: string; text: string; tokens: Set<string> };
 
 const flatten = (v: string) => v.toLowerCase().replace(/[‘’“”]/g, "'").replace(/\s+/g, " ").trim();
 const tokens = (v: string) => flatten(v).match(/[a-z0-9][a-z0-9./-]{2,}/g) ?? [];
-/**
- * Share of the quote's words that genuinely appear on the page. Substring matching cannot be used: manufacturer
- * spec sheets are PDFs that arrive as "| cell | cell |" tables, so a faithful quote never matches them literally.
- * Measured against live pages: a real quote scores 1.00, the same wording with invented part codes scores 0.85,
- * and a quote lifted from a different page scores 0.72.
- */
-const MIN_COVERAGE = 0.95;
-/**
- * The evidence can be real and still describe the wrong fixture: asked about an invented "Sloan Imperial 9000",
- * a model happily returns a genuine, quotable kit for a different valve. So the fixture the technician named
- * must itself appear in the retrieved pages. Measured: real fixtures score 0.80-1.00, invented ones 0.20-0.67.
- */
-const MIN_GROUNDING = 0.75;
-function coverage(quoteTokens: string[], source: Source) {
-  if (quoteTokens.length < 2) return 0;
-  return quoteTokens.filter(t=>source.tokens.has(t)).length / quoteTokens.length;
-}
 /** Exa returns the quoted words; strip any framing the extraction wraps around them before scoring. */
+/**
+ * A required identifier field gets filled with a placeholder rather than left empty ("N/A (Generic)",
+ * "Various (Generic/Pre-engineered)"). Enumerating every evasion is unwinnable, so require the value to
+ * look like a catalogue part number instead: it carries a digit, no parentheses and at most one space.
+ * Validated against real numbers (A-1101-A, QS-50-H, 25/5DVR, MAR 12905, S1-02440907000) and refusals.
+ */
+const VAGUE = /\b(?:n\/?a|none|null|unknown|tbd|various|multiple|generic|assorted|pre-?engineered|placeholder|standard|typical)\b/i;
+const identifier = (v: unknown) => {
+  const id = String(v ?? "").trim();
+  if (id.length < 3 || id.length > 40 || VAGUE.test(id) || id.includes("(") || id.includes(")")) return "";
+  if (!/\d/.test(id) || id.split(" ").length > 2) return "";
+  return /^[A-Za-z0-9][A-Za-z0-9 ./_-]*$/.test(id) ? id : "";
+};
 const unwrapQuote = (v: string) => v.trim()
   .replace(/^(?:from\s+)?sources?\s*\[?\d+\]?\s*[:,-]?\s*/i, "")
   .replace(/^["'“‘]+|["'”’]+$/g, "")
@@ -65,9 +62,9 @@ export async function POST(request: Request) {
     const systemPrompt = `${RULES}\n\nREPORTED FAULTS (use these exact ids in coversFaults):\n${parts.map(p=>`- ${p.id}: ${p.description}${p.equipment?` (on ${p.equipment})`:""}`).join("\n")}${cited.length?`\n\nPart numbers already on the work order: ${cited.join(", ")}. Say in skuNote whether each is still the number to order.`:""}`;
 
     const started = Date.now();
-    // text as well as highlights: the evidence check below needs broad page context, not just the matched excerpt.
-    const result = await exaSearch({ query, type:"auto", numResults:12, contents:{ highlights:true, text:{maxCharacters:EXCERPT} }, systemPrompt, outputSchema: SCHEMA }, request.signal);
-    const trace: ExaTrace[] = [{ step:"Identify the part", endpoint:"POST /search", query, searchType:String(result.resolvedSearchType || "auto"), results:(result.results ?? []).length, costDollars: typeof result.costDollars?.total === "number" ? result.costDollars.total : null, ms: Date.now()-started }];
+    // Use one content view: technical tables need full context for the evidence check.
+    const result = await exaSearch({ query, type:"auto", numResults:12, contents:{ text:true }, systemPrompt, outputSchema: SCHEMA }, request.signal);
+    const trace: ExaTrace[] = [{ step:"Identify the part", endpoint:"POST /search", query, searchType:String(result.resolvedSearchType || "auto"), results:(result.results ?? []).length, costDollars: typeof result.costDollars?.total === "number" ? result.costDollars.total : null, ms: Date.now()-started, requestId: result.requestId }];
 
     const sources: Source[] = [];
     const seen = new Set<string>();
@@ -76,7 +73,7 @@ export async function POST(request: Request) {
         const url = new URL(item.url);
         if (!['https:','http:'].includes(url.protocol) || seen.has(url.href)) continue;
         seen.add(url.href);
-        const text = [String(item.text ?? ""), ...(item.highlights ?? [])].join(" ").slice(0,EXCERPT*2);
+        const text = String(item.text ?? "").slice(0,EXCERPT);
         sources.push({ url: url.href, title: String(item.title || url.hostname), domain: url.hostname.replace(/^www\./,""), text, tokens: new Set(tokens(text)) });
       } catch { /* Unusable result. */ }
     }
@@ -89,28 +86,45 @@ export async function POST(request: Request) {
     for (const part of parts) {
       const t = tokens(part.equipment || part.description);
       if (t.length < 2) continue;
-      if (t.filter(x=>corpus.has(x)).length / t.length < MIN_GROUNDING) ungrounded.set(part.id, `The retrieved pages never mention ${part.equipment || part.description}, so no part could be confirmed for it. Check the model designation on the equipment plate.`);
+      // Token coverage alone, measured: real fixtures score 0.80-1.00 and invented ones 0.20-0.67. A
+      // supplier page sells the kit, not the fixture, so the fixture's own model number ("Royal 111")
+      // is frequently absent from every page — demanding it rejects real equipment. Whether the cited
+      // part actually fits is settled by the evidence check below, not by token presence here.
+      if (t.filter(x=>corpus.has(x)).length / t.length < 0.75) ungrounded.set(part.id, `The retrieved pages never mention ${part.equipment || part.description}, so no part could be confirmed for it. Check the model designation on the equipment plate.`);
     }
 
     const ids = new Set(parts.map(p=>p.id));
+    const unverifiable = new Map<string,string>();
     const resolved: ResolvedPart[] = [];
     for (const [i, raw] of extracted.slice(0,12).entries()) {
       const partIds = (Array.isArray(raw.coversFaults) ? raw.coversFaults : []).map(String).filter((id: string)=>ids.has(id) && !ungrounded.has(id));
       const name = String(raw.name ?? "").slice(0,200);
       if (!partIds.length || !name) continue;
       const evidence = unwrapQuote(String(raw.evidence ?? "")).slice(0,700);
-      const quoteTokens = tokens(evidence);
-      // Attribute the quote to whichever retrieved page actually carries its words.
-      const source = sources.reduce((best, next)=> coverage(quoteTokens, next) > coverage(quoteTokens, best) ? next : best, sources[0]);
-      const verified = coverage(quoteTokens, source) >= MIN_COVERAGE;
+      const partNumber = identifier(raw.partNumber), sku = identifier(raw.sku);
+      const identifiers = [partNumber, sku].filter(Boolean);
+      // Without a real part number or SKU there is nothing an estimator can order, whatever the pages said.
+      if (!identifiers.length) continue;
+      const source = sources.find(page=>evidenceOnPage(evidence,page.text)
+        && identifiers.some(id=>containsIdentifier(evidence,id) || containsIdentifier(page.text,id))) ?? sources[0];
+      // Text presence is weaker than engineering compatibility. The UI must call this evidence, never fit verification.
+      // The quote must be verbatim on the cited page, and that same page must carry the part number.
+      // Requiring the number inside the excerpt itself fails legitimate contents lists, which do not repeat it.
+      const verified = evidenceOnPage(evidence,source.text) && identifiers.some(id=>containsIdentifier(evidence,id) || containsIdentifier(source.text,id));
       const supporting = verified ? [{ url: source.url, label: source.domain }] : [];
-      const status = ["current","variant","superseded","unknown"].includes(String(raw.skuStatus)) ? String(raw.skuStatus) as ResolvedPart["skuStatus"] : "unknown";
-      resolved.push({ id:`resolved-${i+1}`, partIds, name, manufacturer:String(raw.manufacturer ?? "").slice(0,100), partNumber:String(raw.partNumber ?? "").slice(0,100), sku:String(raw.sku ?? "").slice(0,100),
+      // The premise is that nothing reaches the estimator on the model's word alone. A candidate whose quote
+      // cannot be located on a retrieved page is not shown as a part: it becomes an unresolved fault with a
+      // reason, so it can never be priced or quoted. Invented fixtures surface here.
+      if (!verified) { for (const id of partIds) unverifiable.set(id, `A candidate part was suggested (${[String(raw.manufacturer ?? ""), partNumber].filter(Boolean).join(" ")}) but its supporting quote could not be found on any retrieved page, so it is not offered. Confirm the equipment model, or check the part with the manufacturer.`); continue; }
+      const status = verified && ["current","variant","superseded","unknown"].includes(String(raw.skuStatus))
+        && (raw.skuStatus !== "superseded" || /replac|supersed|obsolete/i.test(evidence))
+        ? String(raw.skuStatus) as ResolvedPart["skuStatus"] : "unknown";
+      resolved.push({ id:`resolved-${i+1}`, partIds, name, manufacturer:String(raw.manufacturer ?? "").slice(0,100), partNumber, sku,
         reason:String(raw.reason ?? "").slice(0,600), evidence, verified, sourceUrl:source.url, sourceLabel:source.domain, supporting,
-        searchQuery:[String(raw.manufacturer ?? ""), String(raw.partNumber ?? ""), String(raw.sku ?? "")].map(v=>v.trim()).filter(Boolean).join(" ").slice(0,600) || name, skuStatus:status, skuNote:String(raw.skuNote ?? "").slice(0,300) });
+        searchQuery:[String(raw.manufacturer ?? "").trim(), partNumber, sku].filter(Boolean).join(" ").slice(0,600), skuStatus:status, skuNote:status === "unknown" ? "" : String(raw.skuNote ?? "").slice(0,300) });
     }
     const covered = new Set(resolved.flatMap(r=>r.partIds));
-    const unresolved = parts.filter(p=>!covered.has(p.id)).map(p=>({ partId:p.id, reason: ungrounded.get(p.id) ?? "No single part could be confirmed for this fault. The retrieved pages list variants that differ by rating — confirm the flow rate, size or voltage on the equipment plate." })).slice(0,12);
+    const unresolved = parts.filter(p=>!covered.has(p.id)).map(p=>({ partId:p.id, reason: ungrounded.get(p.id) ?? unverifiable.get(p.id) ?? "No catalogue part could be confirmed. This reads as a materials-and-labour line (pipe, fittings, strapping) rather than an orderable part — price it from your own material list, or add the equipment model if one applies." })).slice(0,12);
     const payload: Discovery = { parts: resolved, unresolved, pagesScanned: sources.length, trace };
     return Response.json(payload);
   } catch(error) { return Response.json({ error: safeError(error) }, { status: 502 }); }

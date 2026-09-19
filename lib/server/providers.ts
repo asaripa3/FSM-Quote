@@ -32,17 +32,19 @@ export async function modelJson(system: string, input: string, signal?: AbortSig
   if (typeof text !== "string") throw new Error("Job analysis returned no usable response. Please try again.");
   return JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, ""));
 }
-export async function exaSearch(payload: object, signal?: AbortSignal) {
+async function exaRequest(endpoint: "search" | "contents", payload: object, signal?: AbortSignal) {
   const key = secret("EXA_API_KEY");
   if (!key) throw new Error("Exa is not configured. Add EXA_API_KEY on the server.");
-  const res = await fetch("https://api.exa.ai/search", { method: "POST", headers: { "x-api-key": key, "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000), cache: "no-store" });
+  const res = await fetch(`https://api.exa.ai/${endpoint}`, { method: "POST", headers: { "x-api-key": key, "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000), cache: "no-store" });
   if (!res.ok) {
     // Exa explains rejections in the body; log it server-side rather than leaking provider internals to the client.
-    console.error("Exa search failed", res.status, await res.text().catch(() => ""));
+    console.error(`Exa ${endpoint} failed`, res.status, await res.text().catch(() => ""));
     throw new Error(`Supplier search returned ${res.status}. Please retry or check your Exa account.`);
   }
   return res.json();
 }
+export const exaSearch = (payload: object, signal?: AbortSignal) => exaRequest("search", payload, signal);
+export const exaContents = (payload: object, signal?: AbortSignal) => exaRequest("contents", payload, signal);
 export function safeError(error: unknown) { return error instanceof Error && !/fetch failed|abort|timeout/i.test(error.message) ? error.message : "The provider could not finish the request. Please try again."; }
 // Compare the browser-sent Origin against the host the browser actually connected to.
 // request.url is normalised by the dev server (127.0.0.1 becomes localhost), so it is not a reliable comparison target.
