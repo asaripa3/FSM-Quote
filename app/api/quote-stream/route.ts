@@ -1,6 +1,7 @@
 import { runQuotePipeline } from "@/lib/server/pipeline";
 import { safeError, sameOrigin } from "@/lib/server/providers";
 import { isTradeId } from "@/lib/trades";
+import type { Confirmation } from "@/lib/job";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 export async function POST(request: Request) {
@@ -28,8 +29,14 @@ export async function POST(request: Request) {
     return field&&value?[{field,value}]:[];
   }):[];
   const quantity=Number.isInteger(raw?.quantity)&&raw.quantity>0&&raw.quantity<=999?raw.quantity as number:undefined;
+  let decision: Confirmation["decision"];
+  if (raw?.decision !== undefined) {
+    const d=raw.decision;
+    if (!component || !d || !["replace","repair"].includes(d.action) || !["supports","different"].includes(d.result) || !clamp(d.check,500) || (d.result==="different"&&!clamp(raw.findings,1000))) return Response.json({error:"Confirm the on-site check and repair decision before continuing."},{status:400});
+    decision={action:d.action,result:d.result,check:clamp(d.check,500),sourceUrls:Array.isArray(d.sourceUrls)?d.sourceUrls.filter((url:unknown)=>typeof url==="string"&&/^https?:\/\//i.test(url)).slice(0,8).map((url:string)=>url.slice(0,2000)):[]};
+  }
   const confirmed=component?{component,findings:clamp(raw?.findings,1000),equipment:clamp(raw?.equipment,200),
-    manufacturer:clamp(raw?.manufacturer,100),model:clamp(raw?.model,100),constraints,quantity}:undefined;
+    manufacturer:clamp(raw?.manufacturer,100),model:clamp(raw?.model,100),constraints,quantity,decision}:undefined;
   const abort=new AbortController();
   const signal=AbortSignal.any([request.signal,abort.signal,AbortSignal.timeout(285000)]);
   const encoder=new TextEncoder();

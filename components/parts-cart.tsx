@@ -55,8 +55,8 @@ function Offer({ source, part, picked, quantity, onPick, onQuantity }: {
       <td className="cart-product">
         <a href={source.url} target="_blank" rel="noopener noreferrer">{source.title} ↗</a>
         <span className="cart-supplier">{source.domain}{source.sku ? ` · SKU ${source.sku}` : ""}</span>
-        <span className="cart-match" data-status={source.matchStatus}>{source.matchStatus==="exact"?"Exact identifier":source.matchStatus==="rejected"?"Conflicting specification":"Check identity & fit"}</span><span className="cart-note">{source.priceEvidence}</span>{source.conflicts?.map(conflict=><span className="cart-conflict" key={conflict}>{conflict}</span>)}{source.missingChecks?.map(check=><span className="cart-note" key={check}>{check}</span>)}
-        {source.identityEvidence && <span className="cart-note">Page identifies: {source.identityEvidence}</span>}
+        <span className="cart-match" data-status={source.matchStatus}>{source.matchStatus==="exact"?"Exact identifier":source.matchStatus==="rejected"?"Conflicting specification":"Check identity & fit"}</span>{source.conflicts?.map(conflict=><span className="cart-conflict" key={conflict}>{conflict}</span>)}{source.missingChecks?.map(check=><span className="cart-note" key={check}>{check}</span>)}
+        <details className="cart-source-evidence"><summary>Price & identity evidence</summary><p>{source.priceEvidence}</p>{source.identityEvidence&&<p>{source.identityEvidence}</p>}</details>
       </td>
       <td className="cart-price">
         {source.price !== null ? <strong>{money(source.price)}</strong> : <span className="cart-unpriced">Confirm on page</span>}
@@ -99,7 +99,7 @@ export function PartsCart({ discovery, searches, picks, quantities, onPick, onQu
                 <span className="cart-index">ITEM {String(index + 1).padStart(2, "0")}</span>
                 <h3>{part.name}</h3><p className="cart-path">{part.route==="exact"?"Exact part from your note":"Candidate discovered by Exa"}{part.confidence?` · ${part.confidence} source confidence`:""}</p>
                 <p className="cart-ids">{[part.manufacturer, part.partNumber && `Part ${part.partNumber}`, part.sku && `SKU ${part.sku}`].filter(Boolean).join(" · ")}</p>
-                <Provenance part={part} />
+                <details className="cart-source-evidence"><summary>Part provenance</summary><Provenance part={part} /></details>
               </div>
               <button className="text-button" onClick={() => onRemove(part.id)} disabled={busy||search?.loading}>Remove</button>
             </header>

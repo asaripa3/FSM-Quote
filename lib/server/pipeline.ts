@@ -57,6 +57,11 @@ export async function runQuotePipeline(input: PipelineInput, signal: AbortSignal
  * repair is now retryable on its own without touching the research that produced it.
  */
 async function sourceConfirmedRepair(input: PipelineInput, confirmed: Confirmation, signal: AbortSignal, emit: Emit, progress: (s:PipelineStage,m:string,p?:string)=>void) {
+  if (confirmed.decision?.action === "repair") {
+    emit("discovery_complete", { parts: [], unresolved: [], pagesScanned: 0, trace: [] });
+    progress("complete", "Repair confirmed without replacement parts. Set the labor for this visit.");
+    return;
+  }
   progress("understanding_input", `Confirmed on site: ${confirmed.component}. Sourcing it now, no re-diagnosis.`);
   await sourceParts(input, [confirmedPart(withNoteContext(confirmed, input.note))], signal, emit, progress);
 }

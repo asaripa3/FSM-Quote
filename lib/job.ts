@@ -79,7 +79,8 @@ export type ResearchPacket = { question: string; evidenceSummary: string;
  * question, which is how a 120 V requirement and a 48TCED08A2A6 plate get lost between the two.
  */
 export type Confirmation = { component: string; findings: string; equipment?: string;
-  manufacturer?: string; model?: string; constraints?: Constraint[]; quantity?: number };
+  manufacturer?: string; model?: string; constraints?: Constraint[]; quantity?: number;
+  decision?: { action: "replace" | "repair"; check: string; result: "supports" | "different"; sourceUrls: string[] } };
 export type SourceOption = { title: string; supplier: string; url: string; domain: string; price: number | null; currency: string; priceEvidence: string; sku: string; availability: string; image: string; retrievedAt: string; priceStatus?: "page-extracted" | "cached-page" | "needs-review"; currencyAssumed?: boolean; packQuantity?: number | null; packEvidence?: string; identityEvidence?: string; contentHash?: string; matchStatus?: "exact" | "needs-review" | "rejected"; conflicts?: string[]; missingChecks?: string[]; rankReason?: string; availabilityEvidence?: string };
 /** What Exa + the model concluded actually fixes the fault, before any price is looked up. */
 export type ResolvedPart = {
