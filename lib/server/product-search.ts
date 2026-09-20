@@ -107,7 +107,11 @@ export async function searchProducts(body: ProductInput, signal?: AbortSignal, p
       const status = cached ? {status:"success",source:"cached"} : (contents.statuses ?? []).find((s:{id:string})=>s.id===p.url);
       let offer: Record<string,unknown> = {};
       try { const value = typeof item?.summary==="string" ? JSON.parse(item.summary) : item?.summary; if(value && typeof value==="object" && !Array.isArray(value)) offer=value; } catch { /* Invalid extraction remains unknown. */ }
-      return {...p,offer,domain:new URL(p.url).hostname.replace(/^www\./,""),text:typeof item?.text === "string" ? item.text.slice(0,18000) : "",image:(item ? pickProductImage(item) : "") || p.image,usable:usableContent(status),live:successfulFreshContent(status)};
+      // Enough of the page that the price and the identifier are both inside it. A supplier product
+      // page measured 1,200 to 3,900 characters, but a retailer page carrying reviews and recommended
+      // products runs far longer, and the amount the extraction quoted has to be locatable in what we
+      // kept or the row arrives priceless. The same truncation was rejecting valid parts in discovery.
+      return {...p,offer,domain:new URL(p.url).hostname.replace(/^www\./,""),text:typeof item?.text === "string" ? item.text.slice(0,120000) : "",image:(item ? pickProductImage(item) : "") || p.image,usable:usableContent(status),live:successfulFreshContent(status)};
     });
     const sources: SourceOption[] = pages.map(page=>{
       const offer = page.offer;

@@ -65,13 +65,26 @@ function fieldQuery(brief: Brief) {
   return `How technicians actually troubleshoot ${machine}${codes} ${brief.symptoms.join(", ")}.${open} Field repair walkthroughs, technician videos and practitioner write-ups.`;
 }
 
-function collect(results: unknown[], brief: Brief, suppliers: string[], seen: Set<string>): ResearchSource[] {
+/**
+ * How many pages one host may contribute, so the retrieval budget buys distinct evidence.
+ *
+ * Distinct URLs on one host are routinely the same document again under another path. A live research
+ * run spent three of ten slots on manualsdump, and a corroborated repair path needs two domains, so
+ * near-duplicates cost the packet more than a slot.
+ */
+const PER_HOST = 3;
+
+function collect(results: unknown[], brief: Brief, suppliers: string[], seen: Set<string>, perHost = new Map<string, number>()): ResearchSource[] {
   const out: ResearchSource[] = [];
   for (const raw of results) {
     const item = raw as Record<string, unknown>;
     try {
       const url = new URL(String(item.url ?? ""));
       if (!["http:", "https:"].includes(url.protocol) || seen.has(url.href)) continue;
+      const host = url.hostname.replace(/^www\./, "").toLowerCase();
+      const taken = perHost.get(host) ?? 0;
+      if (taken >= PER_HOST) continue;
+      perHost.set(host, taken + 1);
       seen.add(url.href);
       const title = text(item.title, 200) || url.hostname.replace(/^www\./, "");
       const highlight = (Array.isArray(item.highlights) ? item.highlights.map(h => text(h, 1200)) : []).filter(Boolean).join(" … ").slice(0, 1800);
@@ -99,6 +112,7 @@ export async function researchJob(
   const question = researchQuestion(brief);
   const trace: ExaTrace[] = [];
   const seen = new Set<string>();
+  const perHost = new Map<string, number>();
 
   progress?.("retrieving_knowledge", `Exa is reading documentation for ${brief.equipment || "this equipment"}.`);
   let started = Date.now();
@@ -111,7 +125,7 @@ export async function researchJob(
     searchType: String(first.resolvedSearchType || "auto"), results: (first.results ?? []).length,
     costDollars: first.costDollars?.total ?? null, ms: Date.now() - started, requestId: first.requestId });
 
-  const sources = collect(first.results ?? [], brief, suppliers, seen);
+  const sources = collect(first.results ?? [], brief, suppliers, seen, perHost);
 
   // Only when a whole class is absent, never routinely.
   let fieldSourcesUnavailable = false;
@@ -126,7 +140,7 @@ export async function researchJob(
       trace.push({ step: "Find field knowledge", endpoint: "POST /search", query: fieldQuery(brief),
         searchType: String(second.resolvedSearchType || "auto"), results: (second.results ?? []).length,
         costDollars: second.costDollars?.total ?? null, ms: Date.now() - started, requestId: second.requestId });
-      sources.push(...collect(second.results ?? [], brief, suppliers, seen));
+      sources.push(...collect(second.results ?? [], brief, suppliers, seen, perHost));
     } catch {
       if (signal?.aborted) signal.throwIfAborted();
       // The documentation packet stands on its own. Say the top-up failed rather than leaving the

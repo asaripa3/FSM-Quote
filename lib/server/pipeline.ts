@@ -90,8 +90,21 @@ function withNoteContext(confirmed: Confirmation, note: string): Confirmation {
  * designation, and demanding it there would refuse every correct listing. In `equipment` it reaches
  * the discovery query, where naming the machine is exactly what makes the part specific.
  */
+/**
+ * Name the machine once. The maker, the plate and the equipment description overlap: "Carrier" plus
+ * "48TCED08A2A6" plus "Carrier rooftop unit" searched Exa for "Carrier 48TCED08A2A6 Carrier rooftop
+ * unit repair parts for pressure switch", which is the same repetition the supplier phrase already
+ * strips out of "Moen Moen 1222 cartridge". First occurrence of each word wins, so plate order holds.
+ */
+function nameMachine(parts: (string | undefined)[]) {
+  const seen = new Set<string>();
+  return parts.filter(Boolean).join(" ").split(/\s+/)
+    .filter(word => { const key = word.toLowerCase(); return seen.has(key) ? false : (seen.add(key), true); })
+    .join(" ").trim();
+}
+
 function confirmedPart(confirmed: Confirmation): JobPart {
-  const machine = [confirmed.manufacturer, confirmed.model, confirmed.equipment].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  const machine = nameMachine([confirmed.manufacturer, confirmed.model, confirmed.equipment]);
   const quantity = Number.isInteger(confirmed.quantity) && confirmed.quantity! > 0 && confirmed.quantity! <= 999 ? confirmed.quantity! : 1;
   // Never `part-1`. The parser numbers reported items from one, and this run keeps the parsed job on
   // screen, so sharing that id makes the estimate label the confirmed candidate with an unrelated
@@ -192,5 +205,12 @@ async function sourceParts(input: PipelineInput, incoming: JobPart[], signal: Ab
     }
   };
   await Promise.all([worker(),worker()]);
-  progress("complete",failed?`Research finished; ${failed} supplier ${failed===1?"search needs":"searches need"} a retry.`:parts.length?"Research complete. Choose the right candidate and confirm its fit and price.":"No supported candidate yet. Add the equipment model or part number.");
+  // A decided repair finding nothing is genuinely ambiguous between "not found" and "not needed", and
+  // the research prompt is asked for paths that need no part, so the second is a real answer rather
+  // than a failure. Saying only "add the model" hides it and reads as a dead end.
+  const decidedOnly=remaining.length>0&&remaining.every(p=>p.decided);
+  progress("complete",failed?`Research finished; ${failed} supplier ${failed===1?"search needs":"searches need"} a retry.`
+    :parts.length?"Research complete. Choose the right candidate and confirm its fit and price."
+    :decidedOnly?"Nothing orderable was confirmed for this repair. If it needs no replacement part, quote the labour; otherwise add the part number and retry."
+    :"No supported candidate yet. Add the equipment model or part number.");
 }

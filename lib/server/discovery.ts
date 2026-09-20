@@ -3,7 +3,23 @@ import { containsIdentifier, evidenceAnchored, evidenceGrounding, partIdentifier
 import { dedupeConstraints } from "@/lib/intent";
 import type { Discovery, ExaTrace, ResolvedPart, PartIntent, PurchaseKind } from "@/lib/job";
 
-const EXCERPT = 12000;
+/**
+ * How much of a retrieved page is kept to verify a candidate against.
+ *
+ * This was 12,000 and it was silently discarding correct candidates. The extraction reasons over the
+ * whole page Exa returns; the evidence gate only ever saw the opening of it, so any proof deeper than
+ * 12,000 characters looked fabricated. Measured on the confirmed Carrier pressure switch: the
+ * extraction returned HK06WC061, quoted verbatim from a Carrier parts list on literature.neuco.com,
+ * and that row sits at character 27,556 of a 38,000-character document. A supplier in the same result
+ * set lists the part at $49.95. The candidate was real, the quote was real, and the gate rejected it
+ * because the page had been cut before the evidence.
+ *
+ * Parts lists and service manuals are exactly the documents whose proof is deep in the file, so the
+ * limit now exists only to stop one pathological page exhausting memory: the longest page in that
+ * result set was 384,000 characters, and twelve pages at this cap is a few megabytes held for the
+ * duration of one call. Nothing is stored and nothing extra is fetched; the text was already paid for.
+ */
+const EXCERPT = 400000;
 /** Trade vocabulary that says nothing about which fixture this is, so its absence from the corpus proves nothing. */
 const COMMON_EQUIPMENT = /^(?:water|closet|urinal|valve|flush|flushometer|heater|rooftop|condenser|motor|panel|breaker|circuit|system|unit|tank|pipe|piping|drain|line|supply|exposed|concealed|manual|electric|commercial|assembly|kit|parts?|repair|replacement|double|single|pole)$/;
 type Incoming = { id: string; description: string; equipment: string; sku: string; kind?: PurchaseKind; intent?: PartIntent; decided?: boolean };
@@ -18,6 +34,31 @@ type Incoming = { id: string; description: string; equipment: string; sku: strin
  * and demanding it there refused the confirmed repair outright.
  */
 const alreadyChosen = (p: Incoming) => Boolean(p.decided) || p.kind === "tool" || p.kind === "unit";
+/**
+ * What to buy, named the way a buyer would search for it.
+ *
+ * A tool and a whole unit are things in themselves, so the subject is the entire question. A confirmed
+ * component is a component OF something, and the machine has to travel with it or a pressure switch is
+ * just a pressure switch. Repeated words are dropped because the maker turns up in both halves:
+ * "Carrier 48TCED08A2A6 rooftop unit" plus "pressure switch" must not read "Carrier ... Carrier".
+ */
+const buyingQuestion = (p: Incoming) => {
+  const subject = p.intent?.subject || p.description;
+  if (!p.decided) return subject;
+  const seen = new Set<string>();
+  return `${p.equipment} ${subject}`.split(/\s+/).filter(Boolean)
+    .filter(word => { const key = word.toLowerCase(); return seen.has(key) ? false : (seen.add(key), true); }).join(" ");
+};
+/**
+ * How many pages one host may contribute.
+ *
+ * Measured on the confirmed Carrier pressure switch: of twelve results, seven were partstown.ca pages
+ * carrying the same three designations, so the effective corpus was five pages and the one page that
+ * carried a real Carrier switch number was never retrieved — the extraction then proposed that number
+ * from its own knowledge and the evidence gate correctly refused it. Three is enough for a supplier
+ * that genuinely lists several products and stops one host taking most of the budget.
+ */
+const PER_HOST = 3;
 type Source = { url: string; title: string; domain: string; text: string; tokens: Set<string> };
 
 const flatten = (v: string) => v.toLowerCase().replace(/[‘’“”]/g, "'").replace(/\s+/g, " ").trim();
@@ -75,12 +116,11 @@ export async function discoverParts(parts: Incoming[], signal?: AbortSignal, alt
     // Two overlapping groups, deliberately. `chosen` is the narrower one whose own name is the entire
     // buying question, so the query can be built from it alone. A confirmed component is decided too,
     // but it is a component OF something, so its query has to keep naming the machine.
-    const chosen = parts.filter(p=>p.kind==="tool"||p.kind==="unit");
     const decided = parts.filter(alreadyChosen);
     // A run of already-chosen items is a buying question, so it is asked as one: what the technician
     // intends to source is the subject, and the fixture it came out of is only context.
     const query = alternatives ? `Manufacturer documentation comparing possible replacement parts and distinguishing equipment specifications for ${parts.map(p=>p.intent?.rawContext || `${p.equipment}: ${p.description}`).join("; ")}.`
-      : chosen.length === parts.length ? `${chosen.map(p=>p.intent?.subject||p.description).join(", ")} - product pages giving the manufacturer model number and where to buy it`
+      : decided.length === parts.length ? `${decided.map(buyingQuestion).join(", ")} - product pages giving the manufacturer model number and where to buy it`
       : `${fixtures.join(" and ") || parts[0].description} repair parts for ${parts.map(p=>p.description).join(", ")}`;
     const systemPrompt = `${rules(alternatives)}${decided.length?CHOSEN_RULES:""}\n\nREPORTED FAULTS (use these exact ids in coversFaults):\n${parts.map(p=>`- ${p.id}:${p.kind==="tool"?" [tool]":p.kind==="unit"?" [unit]":p.decided?" [confirmed]":""} ${alreadyChosen(p)?(p.intent?.subject||p.description):p.description}${p.equipment&&p.kind!=="unit"?` (${p.kind==="tool"?"for work on":"on"} ${p.equipment})`:""}`).join("\n")}${cited.length?`\n\nPart numbers already on the work order: ${cited.join(", ")}. Explain in reason whether the sources establish a replacement relationship.`:""}${required.length?`\n\nSTATED REQUIREMENTS the replacement must meet: ${required.map(c=>`${c.field} ${c.value}`).join("; ")}. A candidate that cannot meet these is the wrong candidate.`:""}`;
 
@@ -91,10 +131,17 @@ export async function discoverParts(parts: Incoming[], signal?: AbortSignal, alt
 
     const sources: Source[] = [];
     const seen = new Set<string>();
+    const perHost = new Map<string, number>();
     for (const item of result.results ?? []) {
       try {
         const url = new URL(item.url);
         if (!['https:','http:'].includes(url.protocol) || seen.has(url.href)) continue;
+        // Distinct URLs on one host are routinely the same page again: the same product under a
+        // different path, locale or query string. Deduping hrefs does not catch those.
+        const host = url.hostname.replace(/^www\./,'').toLowerCase();
+        const taken = perHost.get(host) ?? 0;
+        if (taken >= PER_HOST) continue;
+        perHost.set(host, taken + 1);
         seen.add(url.href);
         const text = String(item.text ?? "").slice(0,EXCERPT);
         sources.push({ url: url.href, title: String(item.title || url.hostname), domain: url.hostname.replace(/^www\./,""), text, tokens: new Set(tokens(text)) });
