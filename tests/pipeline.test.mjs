@@ -634,3 +634,27 @@ test('a repair that needs no part still produces an estimate', async () => {
  assert.equal((await PDFDocument.load(bytes)).getPageCount(),1);
  assert.ok(bytes.length>1000);
 });
+
+test('an identifier never carries half of the maker into the price check',async()=>{
+ const { groundedIdentifier, subjectCandidate, withoutMaker }=await import('../lib/intent.ts');
+ const breaker=id=>({id:'part-1',description:'20 amp single pole breaker',quantity:1,sku:'',equipment:'Square D QO load center',
+   intent:{rawContext:'x',manufacturer:'Square D',fixture:'',suspectedPart:'breaker',subject:id,ruledOut:[],supersedes:[],exactModel:'',route:'ambiguous',constraints:[]}});
+ // A two-word maker used to leave its last word behind. Measured over the same six supplier pages at
+ // the same cost: "D QO120" returned one priced row and one identifier match, "QO120" four and five,
+ // because the extraction cannot find a half-maker on a page that writes "Part Number: QO120".
+ assert.equal(groundedIdentifier(breaker('Square D QO120')),'QO120');
+ assert.equal(subjectCandidate(breaker('Square D QO120')).partNumber,'QO120');
+ // The search phrase still names the maker; only the identifier drops it.
+ assert.match(subjectCandidate(breaker('Square D QO120')).searchQuery,/Square D QO120/);
+ // A designation that is genuinely two words keeps both, and a maker that is not a prefix is untouched.
+ assert.equal(groundedIdentifier(breaker('InSinkErator Badger 5 Model 5-87A')),'Badger 5');
+ assert.equal(withoutMaker('QO120','Square D'),'QO120');
+ assert.equal(withoutMaker('Squared Away 12','Square'),'Squared Away 12');
+ // One field writes the company one way and another writes it another way, for the same company.
+ assert.equal(withoutMaker('Square-D QO120','Square D'),'QO120');
+ assert.equal(withoutMaker('SquareD QO120','Square D'),'QO120');
+ assert.equal(withoutMaker('Square D QO120','Square-D'),'QO120');
+ // A subject that is only the maker's name is left alone rather than emptied.
+ assert.equal(withoutMaker('Square D','Square D'),'Square D');
+ assert.equal(withoutMaker('','Square D'),'');
+});

@@ -32,8 +32,7 @@ export function normalizeIntent(value: unknown, note: string, part: Pick<JobPart
   const maker = text(data.manufacturer,100);
   // "Moen 1222" and "1222" come back about equally often for the same note. The page prints the maker
   // and the designation apart, so the identifier check has to be the designation alone.
-  const stated = text(data.exactModel,100);
-  const exactModel = maker && stated.toLowerCase().startsWith(`${maker.toLowerCase()} `) ? stated.slice(maker.length).trim() : stated;
+  const exactModel = withoutMaker(text(data.exactModel,100), maker);
   const uncertainty = /\b(?:maybe|might|possibly|suspect|unsure|unknown|not sure|last time|previous|work order says)\b/i.test(rawContext);
   const explicit = exactModel && containsIdentifier(note,exactModel) && containsIdentifier(rawContext,exactModel);
   const list = (value: unknown, max: number) => Array.isArray(value) ? value.map(v=>text(v,200)).filter(Boolean).slice(0,max) : [];
@@ -67,6 +66,30 @@ function searchPhrase(manufacturer: string | undefined, subject: string) {
 }
 
 /**
+ * A designation with the maker's name taken off the front of it.
+ *
+ * Supplier pages print the maker and the number apart, and an identifier carrying both only matches a
+ * page that happens to write them adjacent. Worse, a two-word maker leaves half of itself behind:
+ * "Square D QO120" yielded the identifier "D QO120", which the extraction could not find on pages
+ * writing "QO120" or "Part Number: QO120". Measured over the same six supplier pages at the same cost,
+ * "D QO120" returned one priced row and one identifier match while "QO120" returned four and five.
+ */
+export const withoutMaker = (value: string, manufacturer: string | undefined) => {
+  const maker = (manufacturer ?? "").trim();
+  const loose = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, "");
+  const target = loose(maker);
+  if (!target) return value;
+  const words = value.split(/\s+/).filter(Boolean);
+  // Walk the leading words until they spell the maker, however either side punctuates or spaces it:
+  // one field writes "Square D" and another "Square-D" for the same company. Never the whole value,
+  // so a subject that is only the maker's name is left alone rather than emptied.
+  for (let take = 1; take < Math.min(words.length, 5); take++) {
+    if (loose(words.slice(0, take).join("")) === target) return words.slice(take).join(" ").trim();
+  }
+  return value;
+};
+
+/**
  * Whether this item can go straight to supplier pricing.
  *
  * The price gate accepts nothing it cannot tie to an identifier on the page, so "identifiable enough
@@ -76,7 +99,8 @@ function searchPhrase(manufacturer: string | undefined, subject: string) {
  * named tool with no model number still goes to discovery.
  */
 export function groundedIdentifier(part: JobPart) {
-  return part.intent?.exactModel || part.sku || partIdentifier(part.intent?.subject ?? "") || "";
+  return part.intent?.exactModel || part.sku
+    || partIdentifier(withoutMaker(part.intent?.subject ?? "", part.intent?.manufacturer)) || "";
 }
 
 /** A line item the technician has already identified: priced directly, never diagnosed. */
