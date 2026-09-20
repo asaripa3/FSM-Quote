@@ -658,3 +658,59 @@ test('an identifier never carries half of the maker into the price check',async(
  assert.equal(withoutMaker('Square D','Square D'),'Square D');
  assert.equal(withoutMaker('','Square D'),'');
 });
+
+test('a documented path that states no on-site check can still be confirmed',async()=>{
+ const { decisionGate, confirmDecision }=await import('../lib/confirmation.ts');
+ const brief={equipment:'rooftop unit',manufacturer:'Carrier',model:'48TCED08A2A6',serial:'',faultCodes:['31'],
+   symptoms:[],alreadyChecked:[],stillUncertain:[],constraints:[],needsResearch:true};
+ const base={selected:0,pathCount:2,typedComponent:'',result:'',notes:'',quantity:1,action:'replace'};
+ const withCheck={component:'Pressure switch',confirmBy:'Meter across the switch terminals.'};
+ const noCheck={component:'Vent system',confirmBy:''};
+
+ // A path that names its test confirms against that test, as before.
+ const normal=decisionGate({...base,path:withCheck,result:'supports'});
+ assert.equal(normal.other,false);
+ assert.equal(normal.unchecked,false);
+ assert.equal(normal.component,'Pressure switch');
+ assert.equal(normal.check,'Meter across the switch terminals.');
+ assert.equal(normal.ready,true);
+
+ // A path with no stated test used to leave the button disabled for good, while the screen told the
+ // technician to "record an independent finding instead" and offered no way to do it. It takes the
+ // independent route, which has a real check string, so the decision still carries why it was made.
+ const blocked=decisionGate({...base,path:noCheck,result:'supports'});
+ assert.equal(blocked.unchecked,true);
+ assert.equal(blocked.other,true);
+ assert.equal(blocked.ready,false);
+ assert.match(blocked.blocker,/Name the component/);
+ const done=decisionGate({...base,path:noCheck,typedComponent:'Vent system',result:'different',notes:'Flue was blocked. Cleared it.'});
+ assert.equal(done.ready,true);
+ assert.equal(done.blocker,'');
+ assert.match(done.check,/documentation states none/);
+ // And the confirmation it produces is accepted rather than thrown out for a missing check.
+ const confirmation=confirmDecision({action:'replace',component:done.component,check:done.check,
+   result:'different',notes:'Flue was blocked. Cleared it.',quantity:done.quantity,sourceUrls:[]},brief);
+ assert.equal(confirmation.component,'Vent system');
+ assert.match(confirmation.findings,/Flue was blocked/);
+});
+
+test('the confirm button always says what it is waiting for',async()=>{
+ const { decisionGate }=await import('../lib/confirmation.ts');
+ const path={component:'Pressure switch',confirmBy:'Meter across the terminals.'};
+ const base={path,selected:0,pathCount:1,typedComponent:'',result:'',notes:'',quantity:1,action:'replace'};
+ const why=over=>decisionGate({...base,...over}).blocker;
+ // Every state that disables the control names the missing thing. Silence was the milder form of the
+ // same dead end: clearing the quantity field greyed the button out with nothing on screen to explain it.
+ assert.match(why({}),/Record what your check established/);
+ assert.match(why({result:'ruled-out'}),/does not confirm a replacement/);
+ assert.match(why({result:'unsure'}),/does not confirm a replacement/);
+ assert.match(why({result:'supports',quantity:0}),/quantity between 1 and 999/);
+ assert.match(why({result:'supports',quantity:1000}),/quantity between 1 and 999/);
+ assert.match(why({selected:-2,pathCount:1}),/Name the component/);
+ assert.match(why({selected:-2,pathCount:1,typedComponent:'Blocked flue'}),/Tick the box/);
+ assert.match(why({selected:-2,pathCount:1,typedComponent:'Blocked flue',result:'different'}),/Describe what your inspection established/);
+ assert.equal(why({result:'supports'}),'');
+ // A repair needs no part, so its hidden quantity field can never block it.
+ assert.equal(why({result:'supports',action:'repair',quantity:0}),'');
+ assert.equal(decisionGate({...base,result:'supports',action:'repair',quantity:0}).quantity,1);
+});

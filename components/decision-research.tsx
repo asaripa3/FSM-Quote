@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { confirmDecision, type DecisionDraft } from "@/lib/confirmation";
+import { confirmDecision, decisionGate, type DecisionDraft } from "@/lib/confirmation";
 import type { Brief, Confirmation, ResearchPacket, ResearchSource } from "@/lib/job";
 
 export type WorkspacePhase = "capture" | "research" | "confirm" | "act";
@@ -32,12 +32,11 @@ export function DecisionResearch({brief,packet,phase,onPhase,onConfirm,onEdit,bu
  const [action,setAction]=useState<DecisionDraft["action"]>("replace"),[component,setComponent]=useState("");
  const [notes,setNotes]=useState(""),[quantity,setQuantity]=useState(1),[error,setError]=useState("");
  const path=packet.repairPaths[selected];
- const choose=(index:number)=>{setSelected(index);setResult("");setError("");};
- const other=selected===-2 || packet.repairPaths.length===0;
- const confirmedComponent=other?component:path?.component||"";
- const check=other?"Technician's independent on-site inspection":path?.confirmBy||"";
- const ready=(other?result==="different"&&!!notes.trim():result==="supports")&&!!confirmedComponent.trim()&&!!check&&Number.isInteger(quantity)&&quantity>0&&quantity<=999;
- const submit=()=>{try{onConfirm(confirmDecision({action,component:confirmedComponent,check,result,notes,quantity,sourceUrls:path?.sourceUrls||[]},brief));}catch(e){setError(e instanceof Error?e.message:"Review the confirmation.");}};
+ const choose=(index:number)=>{setSelected(index);setResult("");setError("");
+  setComponent((packet.repairPaths[index]?.confirmBy??"").trim()?"":packet.repairPaths[index]?.component??"");};
+ const {other,unchecked,component:confirmedComponent,check,quantity:counted,blocker,ready}=
+  decisionGate({path,selected,pathCount:packet.repairPaths.length,typedComponent:component,result,notes,quantity,action});
+ const submit=()=>{try{onConfirm(confirmDecision({action,component:confirmedComponent,check,result,notes,quantity:counted,sourceUrls:path?.sourceUrls||[]},brief));}catch(e){setError(e instanceof Error?e.message:"Review the confirmation.");}};
  if(phase!=="research"&&phase!=="confirm")return null;
  return <><section className="dw-main" aria-label={phase==="research"?"Research decision":"Confirm repair"}>
  {phase==="research"?<>
@@ -55,15 +54,15 @@ export function DecisionResearch({brief,packet,phase,onPhase,onConfirm,onEdit,bu
   <div className="dw-action-bar"><button className="dw-button" onClick={onEdit} disabled={busy}>Still unresolved · Add observations</button><button className="dw-button dw-primary" disabled={busy||selected<0} onClick={()=>onPhase("confirm")}>Record check result <span aria-hidden="true">→</span></button></div>
  </>:<>
   <p className="dw-status">Technician confirmation</p><h1>What did your check establish?</h1><p className="dw-copy">Your decision controls what happens next. Notes remain attached to that decision.</p>
-  <div className="dw-focus"><p className="dw-eyebrow">{other?"Independent finding":"Selected path"}</p><h2>{other?"A different issue found on site":path?.component||"Choose a repair path"}</h2>
-   {other?<><label className="dw-label">Component or work confirmed<input value={component} onChange={e=>setComponent(e.target.value)} maxLength={200} placeholder="Name the component or work you verified"/></label><label className="dw-label">What your inspection established<textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} maxLength={600} placeholder="Record the test and observed result"/></label><label className="dw-check"><input type="checkbox" checked={result==="different"} onChange={e=>setResult(e.target.checked?"different":"")}/>I confirmed this finding on site.</label></>:<><p className="dw-check-prompt">{check||"This path has no confirmation check. Record an independent finding instead."}</p><fieldset className="dw-result"><legend>Check result</legend>{([["supports","Supports this repair"],["ruled-out","Rules this out"],["unsure","Not yet conclusive"]] as const).map(([id,label])=><label key={id} data-selected={result===id}><input type="radio" name="check-result" value={id} checked={result===id} onChange={()=>setResult(id)}/>{label}</label>)}</fieldset>
+  <div className="dw-focus"><p className="dw-eyebrow">{unchecked?"Documented path · no stated check":other?"Independent finding":"Selected path"}</p><h2>{unchecked?path!.component:other?"A different issue found on site":path?.component||"Choose a repair path"}</h2>
+   {other?<>{unchecked&&<p className="dw-check-prompt">The documentation names this component but states no test for it. Describe the check you performed, so the decision carries the reason it was made.</p>}<label className="dw-label">Component or work confirmed<input value={component} onChange={e=>setComponent(e.target.value)} maxLength={200} placeholder="Name the component or work you verified"/></label><label className="dw-label">What your inspection established<textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={3} maxLength={600} placeholder="Record the test and observed result"/></label><label className="dw-check"><input type="checkbox" checked={result==="different"} onChange={e=>setResult(e.target.checked?"different":"")}/>I confirmed this finding on site.</label></>:<><p className="dw-check-prompt">{check||"This path has no confirmation check. Record an independent finding instead."}</p><fieldset className="dw-result"><legend>Check result</legend>{([["supports","Supports this repair"],["ruled-out","Rules this out"],["unsure","Not yet conclusive"]] as const).map(([id,label])=><label key={id} data-selected={result===id}><input type="radio" name="check-result" value={id} checked={result===id} onChange={()=>setResult(id)}/>{label}</label>)}</fieldset>
    {(result==="ruled-out"||result==="unsure")&&<p className="dw-warning">No part will be sourced. Return to the evidence or record a different confirmed finding.</p>}
    <details className="dw-disclosure"><summary>Add observations or measurements (optional)</summary><label className="dw-label">On-site observations<textarea value={notes} onChange={e=>setNotes(e.target.value)} rows={2} maxLength={600}/></label></details></>}
   </div>
   <fieldset className="dw-result"><legend>Confirmed action</legend><label data-selected={action==="replace"}><input type="radio" name="repair-action" checked={action==="replace"} onChange={()=>setAction("replace")}/>Replace a component</label><label data-selected={action==="repair"}><input type="radio" name="repair-action" checked={action==="repair"} onChange={()=>setAction("repair")}/>Repair without replacement parts</label></fieldset>
   {action==="replace"&&<label className="dw-label dw-quantity">Quantity<input type="number" min={1} max={999} step={1} value={quantity} onChange={e=>setQuantity(Number(e.target.value))}/></label>}
   {error&&<p className="dw-error" role="alert">{error}</p>}
-  <div className="dw-action-bar"><button className="dw-button" disabled={busy} onClick={()=>onPhase("research")}>Back to evidence</button><button className="dw-button dw-primary" disabled={busy||!ready} onClick={submit}>{busy?"Continuing…":action==="repair"?"Confirm repair · Quote labor":"Confirm replacement · Find suppliers"}<span aria-hidden="true">→</span></button></div>
+  <div className="dw-action-bar"><button className="dw-button" disabled={busy} onClick={()=>onPhase("research")}>Back to evidence</button>{!busy&&blocker&&<p className="dw-small">{blocker}</p>}<button className="dw-button dw-primary" disabled={busy||!ready} onClick={submit}>{busy?"Continuing…":action==="repair"?"Confirm repair · Quote labor":"Confirm replacement · Find suppliers"}<span aria-hidden="true">→</span></button></div>
  </>}
  </section><EvidencePanel packet={packet} pathIndex={selected}/></>;
 }
