@@ -45,7 +45,7 @@ const CHAPTERS: { short: string; title: string; text: string; focus: Focus }[] =
   {
     short: "Choose your trade",
     title: "Every job starts with a technician.",
-    text: "Record what you found on site. FieldQuote helps find the parts and build the estimate, so you’re not replaying recordings after your shift. Choose a technician to start.",
+    text: "Tell FSMpedia what you are seeing. It researches the equipment, brings back the evidence you need to narrow the repair, then sources the part. Choose a technician to start.",
     focus: { x: 0.5, y: 0.305, z: 1.15 },
   },
   {

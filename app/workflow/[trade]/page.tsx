@@ -12,9 +12,9 @@ export async function generateMetadata({
   params,
 }: PageProps<"/workflow/[trade]">): Promise<Metadata> {
   const { trade } = await params;
-  if (!isTradeId(trade)) return { title: "FieldQuote" };
+  if (!isTradeId(trade)) return { title: "FSMpedia" };
   return {
-    title: `${TRADES[trade].name} — FieldQuote`,
+    title: `${TRADES[trade].name} — FSMpedia`,
     description: TRADES[trade].blurb,
   };
 }

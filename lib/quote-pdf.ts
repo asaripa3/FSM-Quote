@@ -38,7 +38,7 @@ export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote:
   const write = (text: string, x: number, y: number, size = 11, font = regular, color = ink) => page.drawText(ascii(text), { x, y, size, font, color });
   const right = (text: string, y: number, size = 11, font = mono) => { const clean = ascii(text); write(clean, 547 - font.widthOfTextAtSize(clean, size), y, size, font); };
   const rule = (y: number) => page.drawLine({ start: { x: 48, y }, end: { x: 547, y }, thickness: .6, color: rgb(.8,.83,.85) });
-  const name = ascii(company || "exa / FieldQuote").slice(0, 40);
+  const name = ascii(company || "exa / FSMpedia").slice(0, 40);
 
   const startPage = (kind: "first" | "items" | "closing") => {
     page = doc.addPage([WIDTH, HEIGHT]); pages.push(page);
@@ -125,7 +125,7 @@ export async function downloadQuotePdf(pack: TradePack, lines: QuoteLine[], quot
   const bytes = await createQuotePdf(pack, lines, quote, company, exclusions);
   const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
   const link = document.createElement("a");
-  link.href = url; link.download = `FieldQuote-${pack.id}-estimate.pdf`;
+  link.href = url; link.download = `FSMpedia-${pack.id}-estimate.pdf`;
   document.body.appendChild(link); link.click(); link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }

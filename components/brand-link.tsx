@@ -22,7 +22,7 @@ export function BrandLink({
     <Link
       href="/"
       className={className}
-      aria-label="FieldQuote home"
+      aria-label="FSMpedia home"
       onClick={(e) => {
         if (pathname !== "/") return;
         e.preventDefault();

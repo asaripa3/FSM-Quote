@@ -1,4 +1,4 @@
-# FieldQuote
+# FSMpedia
 
 An Exa-powered parts-intelligence layer for field service. A technician's inspection note becomes verified replacement parts, live supplier prices, and a quote-ready estimate.
 
@@ -14,7 +14,7 @@ Field Service Management and MRO parts procurement: plumbing, HVAC, electrical a
 
 **Enterprise customer:** commercial field-service companies, multi-trade maintenance operators, facilities-service providers.
 
-**End user:** the field technician or service estimator. Today they inspect equipment, record a note, then later replay it, identify parts, search supplier sites, verify compatibility, copy prices, and hand-build a quote. FieldQuote automates that post-inspection research.
+**End user:** the field technician or service estimator, standing in front of equipment their own systems do not fully know. Today the open web is their unofficial knowledge base: manufacturer portals, PDFs, distributor pages, forums and video, navigated by hand, outside the job. FSMpedia turns that into a programmatic, evidence-backed step inside the work.
 
 ## Where Exa is used
 
