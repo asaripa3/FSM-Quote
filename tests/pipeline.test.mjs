@@ -714,3 +714,78 @@ test('the confirm button always says what it is waiting for',async()=>{
  assert.equal(why({result:'supports',action:'repair',quantity:0}),'');
  assert.equal(decisionGate({...base,result:'supports',action:'repair',quantity:0}).quantity,1);
 });
+
+test('a clarifying question is only asked when the answer would change the retrieval',async()=>{
+ const { followUps, noteWithAnswers }=await import('../lib/clarify.ts');
+ const brief=o=>({equipment:'',manufacturer:'',model:'',serial:'',faultCodes:[],symptoms:[],alreadyChecked:[],stillUncertain:[],constraints:[],needsResearch:true,...o});
+
+ // A note that already names the machine and says what was ruled out is not interrogated.
+ assert.deepEqual(followUps(brief({equipment:'thermostatic mixing valve',manufacturer:'Powers',model:'LFN430',alreadyChecked:['check stops open']})),[]);
+
+ // A thermostatic mixing valve is mechanical. An earlier pass matched "thermostat" and "control"
+ // and asked which fault code its control board was showing, which is a question about a part it
+ // does not have.
+ const valve=followUps(brief({equipment:'thermostatic mixing valve',manufacturer:'Powers',alreadyChecked:['x'],symptoms:['outlet temperature swings']}));
+ assert.ok(!valve.some(f=>f.id==='code'),JSON.stringify(valve.map(f=>f.id)));
+
+ // A board that reports failures is worth asking about when no code was given.
+ const rtu=followUps(brief({equipment:'rooftop unit',manufacturer:'Carrier',model:'48TC',alreadyChecked:['x'],symptoms:['inducer runs, ignition does not proceed']}));
+ assert.ok(rtu.some(f=>f.id==='code'));
+
+ // Nothing is asked that the note already says the technician cannot determine. A Powers HydroGuard
+ // note reading "I can't tell which exact model variant it is", "I need to know whether this body
+ // has been retrofitted" and "I haven't pulled the balance chamber yet" was answered with three
+ // questions asking for the variant, the retrofit history and the balance chamber condition. They
+ // came from the parser's `questions`, which is the research agenda, not a quiz for the technician.
+ const hydro=brief({equipment:'pressure-balancing valve',manufacturer:'Powers',model:'Series 410',
+   alreadyChecked:['visual inspection of trim'],
+   stillUncertain:['which exact model variant','whether the body has been retrofitted','balance chamber not pulled yet']});
+ const asked=followUps(hydro);
+ for(const f of asked){
+  assert.doesNotMatch(f.question,/have you pulled|condition inside|after inspection/i,'asks for work not yet done');
+  assert.doesNotMatch(f.question,/what is the exact (?:model )?variant/i,'asks for the thing being researched');
+  assert.doesNotMatch(f.question,/has .* been retrofitted/i,'asks for the thing being researched');
+ }
+ // What it asks for instead is readable where they are standing, and narrows the kit.
+ assert.ok(asked.some(f=>f.id==='markings'&&/suffix|casting|stamped/i.test(f.question)),JSON.stringify(asked.map(f=>f.question)));
+ assert.ok(asked.length<=3,'three questions is the ceiling; more reads as an interrogation');
+ // A note that names the variant is not asked for markings it already gave.
+ assert.ok(!followUps(brief({equipment:'valve',manufacturer:'Powers',model:'410-A',alreadyChecked:['x'],stillUncertain:['whether the seat is scored']})).some(f=>f.id==='markings'));
+
+ // Answers travel as the technician's own words so every grounding check still runs against them.
+ const merged=noteWithAnswers('Powers valve, tag damaged.',asked,{[asked[0].id]:'LFN430-3'});
+ assert.match(merged,/LFN430-3/);
+ assert.equal(noteWithAnswers('Powers valve.',asked,{}),'Powers valve.');
+});
+
+test('a component carries the part of the document it was found in',async()=>{
+ const { passageAround, sourceFit }=await import('../lib/research.ts');
+ // A real service-manual shape: headings, a table, then the sentence that matters.
+ const doc=`HYDROGUARD SERIES 410\n\nINSTALLATION\n${'Mount the valve with the arrow upward. '.repeat(30)}\nSERVICE\n\nShutoff Discs\nIf water continues to flow after the valve is shut off, the shutoff discs are worn and must be replaced.\nReassemble the bonnet and test.\n${'Torque the bonnet to 25 ft-lb. '.repeat(30)}`;
+ const quote='the shutoff discs are worn and must be replaced';
+ const found=passageAround(doc,quote);
+ // The window carries the sentence, names the section it sits in, and says how far through it is.
+ assert.ok(found.text.includes(quote));
+ assert.equal(found.quote,quote);
+ assert.equal(found.section,'Shutoff Discs');
+ assert.ok(found.positionPct>20&&found.positionPct<80,`got ${found.positionPct}%`);
+ // Context either side, not just the sentence back again.
+ assert.ok(found.text.length>quote.length*3);
+ // Whitespace in the retrieved text never lines up with the quote, so the search is offset-mapped
+ // rather than done on a normalised copy: a proportional map lands in the wrong paragraph.
+ const spaced=passageAround(doc.split(' ').join(String.fromCharCode(10)+'  '),quote);
+ assert.ok(spaced,'the quote is still located when the document breaks lines differently');
+ assert.match(spaced.text.replace(/\s+/g,' '),/shutoff discs are worn/);
+ // A quote that is not in the document yields nothing rather than an arbitrary slice.
+ assert.equal(passageAround(doc,'the flux capacitor has failed and must be replaced'),null);
+ assert.equal(passageAround('',quote),null);
+
+ // Sources are ordered by fit to THIS job, so a page about the reported symptom outranks a page
+ // that merely looks official and never mentions it.
+ const job={symptoms:['water keeps flowing after shutoff'],faultCodes:[]};
+ const onPoint={kind:'mirror',match:'family',title:'410 service',highlight:'water continues to flow after shutoff; replace the discs'};
+ const official={kind:'oem',match:'manufacturer',title:'Company overview',highlight:'about our valves'};
+ assert.ok(sourceFit(onPoint,job)>sourceFit(official,job));
+ // Closeness to the plate still dominates: the right machine beats the right words.
+ assert.ok(sourceFit({...official,match:'exact'},job)>sourceFit(onPoint,job));
+});

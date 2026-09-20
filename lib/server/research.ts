@@ -1,5 +1,5 @@
 import { exaSearch } from "@/lib/server/providers";
-import { evidenceStrength, looksLikeNavigation, missingPractitioner, modelMatch, sourceKind } from "@/lib/research";
+import { evidenceStrength, looksLikeNavigation, missingPractitioner, modelMatch, passageAround, sourceFit, sourceKind } from "@/lib/research";
 import { evidenceAnchored, evidenceGrounding } from "@/lib/sourcing";
 import type { Brief, ExaTrace, PipelineStage, RepairPath, ResearchPacket, ResearchSource } from "@/lib/job";
 
@@ -112,7 +112,31 @@ function collect(results: unknown[], brief: Brief, suppliers: string[], seen: Se
   return out;
 }
 
-const RANK: Record<string, number> = { authoritative: 0, corroborating: 1, anecdotal: 2 };
+
+/**
+ * Whether a host will let its page be shown inside the app.
+ *
+ * One HEAD each, in parallel, and only for the few documents worth offering to read. A host that
+ * refuses, rate-limits or simply does not answer is treated as not viewable, which costs the
+ * technician a link out rather than a blank frame.
+ */
+async function probeViewable(sources: ResearchSource[], signal?: AbortSignal) {
+  const candidates = sources
+    .filter(s => (s.kind === "oem" || s.kind === "mirror") && (s.match === "exact" || s.match === "family"))
+    .slice(0, 4);
+  await Promise.all(candidates.map(async source => {
+    try {
+      const res = await fetch(source.url, { method: "HEAD", redirect: "follow", cache: "no-store",
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(6000)]) : AbortSignal.timeout(6000) });
+      if (!res.ok) return;
+      const frame = (res.headers.get("x-frame-options") ?? "").toLowerCase();
+      if (frame.includes("deny") || frame.includes("sameorigin")) return;
+      const csp = (res.headers.get("content-security-policy") ?? "").toLowerCase();
+      if (/frame-ancestors\s+(?:'none'|'self')/.test(csp)) return;
+      source.viewable = true;
+    } catch { /* No answer is not permission. */ }
+  }));
+}
 
 export async function researchJob(
   brief: Brief,
@@ -191,6 +215,7 @@ export async function researchJob(
    * generated "OEM documented" label attached and the interface presents the pair as fact. Trust is
    * derived from where the support was found, never from what the model called it.
    */
+  const pageFor = (url: string) => retrieved.find(r => r.source.url === url);
   const backing = (support: string) => {
     if (support.length < 25) return [];
     // Checked against the whole document, which is what the extraction read. Checked against the
@@ -220,8 +245,13 @@ export async function researchJob(
     // A path the technician is asked to act on needs a component, a way to settle it on site, and a
     // page that says so. Anything short of all three is withheld while its sources stay visible.
     if (!component || !confirmBy || !found.length) return [];
+    // The best-backed page, and the part of it this component is actually discussed in.
+    const best = pageFor(found[0].url);
+    const passage = best?.text ? passageAround(best.text, support) ?? undefined : undefined;
     return [{ component, rationale: text(entry.rationale, 400), confirmBy, support,
-      sourceUrls: found.slice(0, 3).map(s => s.url), evidenceLevel: levelFrom(found) }];
+      sourceUrls: found.slice(0, 3).map(s => s.url), evidenceLevel: levelFrom(found),
+      passage,
+      source: { url: found[0].url, title: found[0].title, domain: found[0].domain, viewable: found[0].viewable } }];
   });
 
   const contradictsSupport = text(output.contradictsSupport, 600);
@@ -229,6 +259,9 @@ export async function researchJob(
   // Absence of a code from a handful of highlights does not establish that the equipment never uses
   // it. Saying so is a strong claim and needs a page that states it.
   const contradicts = contradictsFound.length ? text(output.contradicts, 600) : "";
+
+  const ordered = retrieved.map(r => r.source).sort((a, b) => sourceFit(b, brief) - sourceFit(a, brief));
+  await probeViewable(ordered, signal);
 
   return {
     question,
@@ -239,7 +272,7 @@ export async function researchJob(
     contradictsSourceUrls: contradicts ? contradictsFound.slice(0, 3).map(s => s.url) : [],
     checkBeforeReplacing: list(output.checkBeforeReplacing, 8),
     repairPaths,
-    sources: retrieved.map(r => r.source).sort((a, b) => RANK[a.strength] - RANK[b.strength]),
+    sources: ordered,
     pagesRead: retrieved.length,
     trace,
   };

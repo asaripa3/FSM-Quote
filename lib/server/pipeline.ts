@@ -16,6 +16,13 @@ export type PipelineInput = {
   settings: Pick<JobSettings,"region"|"supplierDomains"> & {preferredDomains?:string};
   /** Present only on the second phase, once the technician has run the checks and decided. */
   confirmed?: Confirmation;
+  /**
+   * Understand the note and stop, so the gaps in it can be put to the technician before a search.
+   *
+   * A question asked now is free; the same question asked after retrieval has already been paid for
+   * with a search against a machine nobody had identified.
+   */
+  clarifyOnly?: boolean;
 };
 
 /**
@@ -33,6 +40,10 @@ export async function runQuotePipeline(input: PipelineInput, signal: AbortSignal
   progress("understanding_input","Reading what the technician is seeing. Nothing is diagnosed here.");
   const job = await parseInspection(input.trade,input.note,signal);
   emit("job_parsed",job);
+  if (input.clarifyOnly) {
+    progress("awaiting_clarification","The note is understood. Anything still missing is worth asking before a search runs.");
+    return;
+  }
 
   if (job.brief.needsResearch) {
     const packet = await researchJob(job.brief, supplierList(input), signal, progress);

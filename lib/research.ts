@@ -165,3 +165,89 @@ const MEASUREMENT = /\b\d+(?:[./]\d+)?\s?(?:v|volts?|a|amps?|hz|psi|gpm|gpf|hp|m
 export function measurementsIn(text: string) {
   return [...new Set((text.match(MEASUREMENT) ?? []).map(v => v.replace(/\s+/g, " ").trim()))];
 }
+
+/**
+ * How well a retrieved source answers THIS job, rather than how official it looks in the abstract.
+ *
+ * Strength alone ranked a manufacturer page that never mentions the reported symptom above a
+ * mirrored manual whose page is about exactly that symptom, which is the wrong way round for a
+ * technician reading top to bottom. Closeness to the plate still dominates, because a document for
+ * the wrong machine is wrong however well it matches the words; publisher comes next; and the
+ * reported symptom breaks the ties.
+ */
+export function sourceFit(
+  source: { kind: SourceKind; match: ModelMatch; title: string; highlight: string },
+  job: { symptoms: string[]; faultCodes: string[] },
+) {
+  const MATCH: Record<ModelMatch, number> = { exact: 4, family: 3, manufacturer: 1, none: 0 };
+  const KIND: Record<SourceKind, number> = { oem: 3, mirror: 2, distributor: 1, practitioner: 1, forum: 0, unknown: 0 };
+  const text = `${source.title} ${source.highlight}`.toLowerCase();
+  const terms = new Set((`${job.symptoms.join(" ")} ${job.faultCodes.join(" ")}`.toLowerCase().match(/[a-z]{4,}/g) ?? []));
+  let hits = 0;
+  for (const term of terms) if (text.includes(term)) hits++;
+  return MATCH[source.match] * 4 + KIND[source.kind] * 2 + Math.min(hits, 5);
+}
+
+/**
+ * The raw text flattened for searching, with every kept character's original index recorded.
+ *
+ * Needed because the quote has to be found in text a human will read. Searching a normalised copy
+ * gives an offset into the copy, and mapping that back by proportion lands in the wrong paragraph
+ * of a document whose whitespace was collapsed unevenly. Carrying the index is exact and cheap.
+ */
+function flatten(text: string) {
+  const chars: string[] = [], index: number[] = [];
+  let inSpace = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (/\s/.test(char)) { if (!inSpace) { chars.push(" "); index.push(i); inSpace = true; } continue; }
+    chars.push(char.toLowerCase()); index.push(i); inSpace = false;
+  }
+  return { flat: chars.join(""), index };
+}
+
+/** A line that reads like a heading: short, titled or shouted, and not a sentence. */
+const heading = (line: string) => {
+  const text = line.trim();
+  if (text.length < 3 || text.length > 80 || /[.;,]$/.test(text)) return false;
+  return text === text.toUpperCase() ? /[A-Z]/.test(text) : /^[A-Z0-9]/.test(text) && text.split(/\s+/).length <= 8;
+};
+
+export type Passage = { text: string; quote: string; section: string; positionPct: number };
+
+/**
+ * The section of a document where a claim actually lives.
+ *
+ * A citation that sends a technician to a forty-page PDF has moved the search, not finished it.
+ * Exa's extracted text carries no page boundaries - measured across six Powers 410 documents,
+ * including the PDFs, not one contained a form feed - so there is no page to link to. What there is
+ * is an exact character offset, and documents that run four to fourteen thousand characters, so the
+ * surrounding passage can simply be shown. Free: the text is already held to verify the quote.
+ */
+export function passageAround(text: string, quote: string, span = 900): Passage | null {
+  if (!text || quote.trim().length < 12) return null;
+  const { flat, index } = flatten(text);
+  // The whole quote where it survives verbatim, otherwise its longest span that does.
+  const candidates = [quote, ...quote.split(/\s*(?:\.{3}|…|⋯)\s*/)]
+    .map(part => flatten(part).flat.trim()).filter(part => part.length >= 12)
+    .sort((a, b) => b.length - a.length);
+  let at = -1, found = "";
+  for (const candidate of candidates) { at = flat.indexOf(candidate); if (at >= 0) { found = candidate; break; } }
+  if (at < 0) return null;
+
+  const from = index[at], to = index[Math.min(at + found.length, index.length - 1)];
+  // Snapped outward to a sentence or line break so the passage does not open mid-word.
+  const head = text.lastIndexOf("\n", Math.max(0, from - span));
+  const start = Math.max(0, head >= 0 && from - head < span * 2 ? head + 1 : from - span);
+  const tail = text.indexOf("\n", to + span);
+  const end = tail >= 0 && tail - to < span * 2 ? tail : Math.min(text.length, to + span);
+
+  const before = text.slice(0, from).split("\n").reverse();
+  const section = before.find(heading)?.trim() ?? "";
+  return {
+    text: text.slice(start, end).replace(/\n{3,}/g, "\n\n").trim(),
+    quote: text.slice(from, to).trim(),
+    section,
+    positionPct: Math.round((from / text.length) * 100),
+  };
+}

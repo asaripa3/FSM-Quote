@@ -43,7 +43,16 @@ export type ModelMatch = "exact" | "family" | "manufacturer" | "none";
 /** `mirror` is a host whose business is republishing other people's manuals: documentation, not the maker. */
 export type SourceKind = "oem" | "mirror" | "distributor" | "practitioner" | "forum" | "unknown";
 export type EvidenceStrength = "authoritative" | "corroborating" | "anecdotal";
-export type ResearchSource = { url: string; title: string; domain: string; highlight: string; kind: SourceKind; strength: EvidenceStrength; match: ModelMatch };
+export type ResearchSource = { url: string; title: string; domain: string; highlight: string; kind: SourceKind; strength: EvidenceStrength; match: ModelMatch;
+  /**
+   * The page can be opened inside the app rather than only linked out to.
+   *
+   * Asked of the host, because the browser will not say: an iframe fires its load event whether it
+   * rendered the manual or a refusal, so a client-side guess shows the technician a blank panel and
+   * calls it evidence. Measured across our own citations - a Carrier training PDF and an unprotected
+   * manual mirror both render; a Cloudflare-protected aggregator answers 403 with X-Frame-Options.
+   */
+  viewable?: boolean };
 /**
  * A component the documentation associates with this failure. Not a diagnosis, and not a purchase.
  *
@@ -53,7 +62,17 @@ export type ResearchSource = { url: string; title: string; domain: string; highl
  */
 export type RepairPath = { component: string; rationale: string; confirmBy: string;
   /** Derived from where the support was found. `documented` is a service manual on a host that is not the maker. */
-  evidenceLevel: "oem" | "documented" | "corroborated" | "field_only"; support: string; sourceUrls: string[] };
+  evidenceLevel: "oem" | "documented" | "corroborated" | "field_only"; support: string; sourceUrls: string[];
+  /**
+   * The section of the document this component is discussed in, carried to the technician.
+   *
+   * A component with a badge and a link asks someone holding a wrench to go and find the relevant
+   * page of a service manual, which is the search they opened the app to avoid. The passage is
+   * extracted from text already held to verify the quote, so it costs nothing to send.
+   */
+  passage?: { text: string; quote: string; section: string; positionPct: number };
+  /** Where the passage came from, named so the document is visible without opening it. */
+  source?: { url: string; title: string; domain: string; viewable?: boolean } };
 export type ResearchPacket = { question: string; evidenceSummary: string;
   /** The practitioner top-up was attempted and did not return. The OEM packet still stands. */
   fieldSourcesUnavailable?: boolean;
@@ -161,7 +180,7 @@ export type PartIntent = {
 };
 /** How many reported items went to each of the pipeline's four destinations. */
 export type Routes = { exact: number; registry: number; sourced: number; tools: number; ambiguous: number; superseded: number };
-export type PipelineStage = "understanding_input" | "retrieving_knowledge" | "reading_documentation" | "awaiting_confirmation" | "resolving_part" | "searching_products" | "validating_results" | "comparing_suppliers" | "complete";
+export type PipelineStage = "understanding_input" | "awaiting_clarification" | "retrieving_knowledge" | "reading_documentation" | "awaiting_confirmation" | "resolving_part" | "searching_products" | "validating_results" | "comparing_suppliers" | "complete";
 export type PipelineProgress = { stage: PipelineStage; message: string; partId?: string; query?: string; at: string };
 export type ProductSearchResult = { query: string; sources: SourceOption[]; trace: ExaTrace[] };
 

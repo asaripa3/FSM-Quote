@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     start(controller){
       const emit=(event:string,payload:unknown)=>{if(!closed)controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`));};
       heartbeat=setInterval(()=>{if(!closed)controller.enqueue(encoder.encode(": keepalive\n\n"));},15000);
-      void runQuotePipeline({trade:body.trade,note:body.note,settings,confirmed},signal,emit)
+      void runQuotePipeline({trade:body.trade,note:body.note,settings,confirmed,clarifyOnly:body.clarifyOnly===true},signal,emit)
         .catch(error=>{if(!closed)emit("error",{error:safeError(error)});})
         .finally(()=>{clearInterval(heartbeat);if(!closed){closed=true;controller.close();}});
     },
