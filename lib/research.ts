@@ -6,7 +6,14 @@ const host = (url: string) => { try { return new URL(url).hostname.replace(/^www
 const path = (url: string) => { try { return new URL(url).pathname.toLowerCase(); } catch { return ""; } };
 const slug = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-/** Hosts whose business is mirroring other people's manuals. Useful, but not the manufacturer. */
+/**
+ * Hosts whose business is mirroring other people's manuals. Useful, but not the manufacturer.
+ *
+ * These are their own class rather than "unknown". A live run for the Carrier fault code came back
+ * with both surviving repair paths quoted out of manualsdir and manualslib, which are copies of the
+ * Carrier service manual: calling that "Field reports only" puts a service manual and a forum comment
+ * under one label, and the technician cannot tell which they are reading.
+ */
 const AGGREGATORS = /^(?:manualslib|manualslib\.tech|manualsdir|manualsdump|easymanua|manual-hub|usersmanualguide|manualzz|manualsonline|scribd|slideshare|studylib|dokumen|c-o-k)\b/;
 const FORUMS = /^(?:reddit|quora|stackexchange|stackoverflow|.*\.stackexchange)\b|forum|community/;
 const VIDEO = /^(?:youtube|youtu\.be|vimeo|dailymotion|rumble)\b/;
@@ -43,7 +50,7 @@ export function sourceKind(url: string, title: string, manufacturer: string, sup
   // be stronger still, and would cover the separate document hosts some OEMs publish through; this
   // at least refuses everything that merely borrows the name.
   if (maker.length >= 3 && slug(registrableName(domain)) === maker) return "oem";
-  if (AGGREGATORS.test(domain)) return "unknown";
+  if (AGGREGATORS.test(domain)) return "mirror";
   if (VIDEO.test(domain)) return "practitioner";
   if (FORUMS.test(domain) || /(?:^|\/)(?:forum|thread|topic)s?(?:\/|$)/.test(path(url))) return "forum";
   if (suppliers.some(s => domain === s || domain.endsWith(`.${s}`))) return "distributor";
@@ -106,6 +113,8 @@ export function evidenceStrength(kind: SourceKind, match: ModelMatch): EvidenceS
   if (match === "none") return "anecdotal";
   if (kind === "oem") return match === "exact" || match === "family" ? "authoritative" : "corroborating";
   if (kind === "forum" || kind === "unknown") return "anecdotal";
+  // A mirrored manual naming this machine corroborates; it is not authoritative, because nothing here
+  // establishes that the copy is complete, current, or the document it claims to be.
   return "corroborating";
 }
 
@@ -118,7 +127,7 @@ export function evidenceStrength(kind: SourceKind, match: ModelMatch): EvidenceS
  * insurance at $0.007, and it only runs when a class is actually absent.
  */
 export function missingPractitioner(kinds: SourceKind[]) {
-  return kinds.length > 0 && !kinds.includes("practitioner") && kinds.some(k => k === "oem" || k === "unknown");
+  return kinds.length > 0 && !kinds.includes("practitioner") && kinds.some(k => k === "oem" || k === "mirror" || k === "unknown");
 }
 
 const CHROME = /\b(?:skip to main content|sign in|log in|create an account|my account|add to cart|view cart|checkout|newsletter|cookie|privacy policy|all rights reserved|search by model number|select a product type)\b/gi;

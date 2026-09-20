@@ -6,7 +6,18 @@ import type { Discovery, ExaTrace, ResolvedPart, PartIntent, PurchaseKind } from
 const EXCERPT = 12000;
 /** Trade vocabulary that says nothing about which fixture this is, so its absence from the corpus proves nothing. */
 const COMMON_EQUIPMENT = /^(?:water|closet|urinal|valve|flush|flushometer|heater|rooftop|condenser|motor|panel|breaker|circuit|system|unit|tank|pipe|piping|drain|line|supply|exposed|concealed|manual|electric|commercial|assembly|kit|parts?|repair|replacement|double|single|pole)$/;
-type Incoming = { id: string; description: string; equipment: string; sku: string; kind?: PurchaseKind; intent?: PartIntent };
+type Incoming = { id: string; description: string; equipment: string; sku: string; kind?: PurchaseKind; intent?: PartIntent; decided?: boolean };
+/**
+ * Items the technician has already settled, so the question is which model to buy, not what failed.
+ *
+ * A tool, a whole-unit replacement and a repair confirmed on site are the same question in this
+ * respect: the component is decided and what is missing is something orderable. It matters here
+ * because the grounding check below asks whether the retrieved pages mention the machine, which is
+ * the right question for a fault and the wrong one for a decided component: a genuine pressure-switch
+ * listing carries the switch's own identifiers and will not carry a rooftop unit's plate designation,
+ * and demanding it there refused the confirmed repair outright.
+ */
+const alreadyChosen = (p: Incoming) => Boolean(p.decided) || p.kind === "tool" || p.kind === "unit";
 type Source = { url: string; title: string; domain: string; text: string; tokens: Set<string> };
 
 const flatten = (v: string) => v.toLowerCase().replace(/[‘’“”]/g, "'").replace(/\s+/g, " ").trim();
@@ -46,7 +57,7 @@ Never invent a part number, SKU, flow rate or kit content. If the pages do not i
  * sells it - and it must not be answered with a repair component for the fault that prompted it.
  */
 const CHOSEN_RULES = `
-ITEMS ALREADY CHOSEN: an id marked [tool] or [unit] is something the technician has decided to buy, not a component to diagnose. [tool] is what they need in hand to do the work. [unit] is a whole piece of equipment they have chosen to replace rather than repair, so the answer is that equipment or its current successor, never a component from inside it. Answer these like any other id: return an entry whose coversFaults contains that id, resolved to one specific purchasable model, with that model's own manufacturer designation in partNumber. Take evidence from a single product page that names that model; never join wording from two pages into one quote.`;
+ITEMS ALREADY CHOSEN: an id marked [tool], [unit] or [confirmed] is something the technician has decided to buy, not a component to diagnose. [tool] is what they need in hand to do the work. [unit] is a whole piece of equipment they have chosen to replace rather than repair, so the answer is that equipment or its current successor, never a component from inside it. [confirmed] is a component the technician has tested on site and established has failed, so do not revisit the diagnosis or offer a different component: find that component for the equipment named beside it. Answer these like any other id: return an entry whose coversFaults contains that id, resolved to one specific purchasable model, with that model's own manufacturer designation in partNumber. Take evidence from a single product page that names that model; never join wording from two pages into one quote.`;
 
 // Exa caps outputSchema at 10 properties across the whole schema. The supplier search phrase is composed below from
 // the identifiers, and the source page is the one whose text actually carries the quote, so neither is asked for.
@@ -61,13 +72,17 @@ export async function discoverParts(parts: Incoming[], signal?: AbortSignal, alt
     const cited = parts.filter(p=>p.sku).map(p=>p.sku);
     const required = dedupeConstraints(parts.flatMap(p=>p.intent?.constraints ?? []));
     // Exa reads the query like a search box; the rules and the fault ids belong in systemPrompt.
+    // Two overlapping groups, deliberately. `chosen` is the narrower one whose own name is the entire
+    // buying question, so the query can be built from it alone. A confirmed component is decided too,
+    // but it is a component OF something, so its query has to keep naming the machine.
     const chosen = parts.filter(p=>p.kind==="tool"||p.kind==="unit");
+    const decided = parts.filter(alreadyChosen);
     // A run of already-chosen items is a buying question, so it is asked as one: what the technician
     // intends to source is the subject, and the fixture it came out of is only context.
     const query = alternatives ? `Manufacturer documentation comparing possible replacement parts and distinguishing equipment specifications for ${parts.map(p=>p.intent?.rawContext || `${p.equipment}: ${p.description}`).join("; ")}.`
       : chosen.length === parts.length ? `${chosen.map(p=>p.intent?.subject||p.description).join(", ")} - product pages giving the manufacturer model number and where to buy it`
       : `${fixtures.join(" and ") || parts[0].description} repair parts for ${parts.map(p=>p.description).join(", ")}`;
-    const systemPrompt = `${rules(alternatives)}${chosen.length?CHOSEN_RULES:""}\n\nREPORTED FAULTS (use these exact ids in coversFaults):\n${parts.map(p=>`- ${p.id}:${p.kind==="tool"?" [tool]":p.kind==="unit"?" [unit]":""} ${p.kind==="tool"||p.kind==="unit"?(p.intent?.subject||p.description):p.description}${p.equipment&&p.kind!=="unit"?` (${p.kind==="tool"?"for work on":"on"} ${p.equipment})`:""}`).join("\n")}${cited.length?`\n\nPart numbers already on the work order: ${cited.join(", ")}. Explain in reason whether the sources establish a replacement relationship.`:""}${required.length?`\n\nSTATED REQUIREMENTS the replacement must meet: ${required.map(c=>`${c.field} ${c.value}`).join("; ")}. A candidate that cannot meet these is the wrong candidate.`:""}`;
+    const systemPrompt = `${rules(alternatives)}${decided.length?CHOSEN_RULES:""}\n\nREPORTED FAULTS (use these exact ids in coversFaults):\n${parts.map(p=>`- ${p.id}:${p.kind==="tool"?" [tool]":p.kind==="unit"?" [unit]":p.decided?" [confirmed]":""} ${alreadyChosen(p)?(p.intent?.subject||p.description):p.description}${p.equipment&&p.kind!=="unit"?` (${p.kind==="tool"?"for work on":"on"} ${p.equipment})`:""}`).join("\n")}${cited.length?`\n\nPart numbers already on the work order: ${cited.join(", ")}. Explain in reason whether the sources establish a replacement relationship.`:""}${required.length?`\n\nSTATED REQUIREMENTS the replacement must meet: ${required.map(c=>`${c.field} ${c.value}`).join("; ")}. A candidate that cannot meet these is the wrong candidate.`:""}`;
 
     const started = Date.now();
     // Use one content view: technical tables need full context for the evidence check.
@@ -93,7 +108,7 @@ export async function discoverParts(parts: Incoming[], signal?: AbortSignal, alt
     const ungrounded = new Map<string,string>();
     for (const part of alternatives ? [] : parts) {
       // A chosen item is identified by what it is; the fixture it came out of need not be on its page.
-      const t = tokens(part.kind === "tool" || part.kind === "unit" ? (part.intent?.subject || part.description) : (part.equipment || part.description));
+      const t = tokens(alreadyChosen(part) ? (part.intent?.subject || part.description) : (part.equipment || part.description));
       if (t.length < 2) continue;
       // Coverage alone is gameable: "Sloan Imperial 9000 hyperflush water closet" scores well because
       // sloan/water/closet are everywhere, while the words that make it fictional carry no weight. So
@@ -101,7 +116,7 @@ export async function discoverParts(parts: Incoming[], signal?: AbortSignal, alt
       // sells the kit, not the fixture, so "Royal 111" is often on no page, whereas an invented word like
       // "hyperflush" or "quantum" is on none either — the difference is that one of them is a number.
       const invented = t.filter(x=>/^[a-z]{5,}$/.test(x) && !COMMON_EQUIPMENT.test(x) && !corpus.has(x));
-      if (t.filter(x=>corpus.has(x)).length / t.length < 0.75 || invented.length) ungrounded.set(part.id, `The retrieved pages never mention ${(part.kind === "tool" || part.kind === "unit" ? (part.intent?.subject || part.description) : part.equipment) || part.description}, so nothing could be confirmed for it. Add the equipment model or part number.`);
+      if (t.filter(x=>corpus.has(x)).length / t.length < 0.75 || invented.length) ungrounded.set(part.id, `The retrieved pages never mention ${(alreadyChosen(part) ? (part.intent?.subject || part.description) : part.equipment) || part.description}, so nothing could be confirmed for it. Add the equipment model or part number.`);
     }
 
     const ids = new Set(parts.map(p=>p.id));

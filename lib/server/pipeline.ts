@@ -1,6 +1,7 @@
 import type { Confirmation, Discovery, JobPart, JobSettings, PipelineStage, ResolvedPart } from "@/lib/job";
 import { dedupeConstraints, describesSameWork, exactCandidate, groundedIdentifier, splitSupersededWork, subjectCandidate } from "@/lib/intent";
 import { designationsIn, measurementsIn } from "@/lib/research";
+import { containsIdentifier, normalizeUnits } from "@/lib/sourcing";
 import { parseInspection } from "./input";
 import { discoverParts } from "./discovery";
 import { searchProducts } from "./product-search";
@@ -69,10 +70,16 @@ async function sourceConfirmedRepair(input: PipelineInput, confirmed: Confirmati
  * between the two. Both are lifted verbatim from the note, so nothing here is inferred.
  */
 function withNoteContext(confirmed: Confirmation, note: string): Confirmation {
-  const model = confirmed.model || designationsIn(note).find(token => !describesSameWork(token, confirmed.component)) || "";
-  const constraints = confirmed.constraints?.length ? confirmed.constraints
+  // Grounded the same way the brief's own model is, because this arrives from a client: a designation
+  // the note never carried would be searched for as this machine and checked against every page.
+  const stated = confirmed.model && containsIdentifier(note, confirmed.model) ? confirmed.model : "";
+  const model = stated || designationsIn(note).find(token => !describesSameWork(token, confirmed.component)) || "";
+  const carried = (confirmed.constraints ?? []).filter(c => c.field && c.value && normalizeUnits(note).includes(normalizeUnits(c.value)));
+  const constraints = carried.length ? carried
+    // The field name is generic because recovering the value from the note cannot tell us what the
+    // technician called it. A carried constraint keeps its real name, which is why carrying matters.
     : measurementsIn(note).map(value => ({ field: "stated requirement", value }));
-  return { ...confirmed, model, constraints };
+  return { ...confirmed, model, constraints: dedupeConstraints(constraints) };
 }
 
 /**
@@ -86,8 +93,16 @@ function withNoteContext(confirmed: Confirmation, note: string): Confirmation {
 function confirmedPart(confirmed: Confirmation): JobPart {
   const machine = [confirmed.manufacturer, confirmed.model, confirmed.equipment].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
   const quantity = Number.isInteger(confirmed.quantity) && confirmed.quantity! > 0 && confirmed.quantity! <= 999 ? confirmed.quantity! : 1;
-  return { id: "part-1", description: confirmed.component, quantity, sku: "", equipment: machine, kind: "part",
-    intent: { rawContext: confirmed.findings, manufacturer: confirmed.manufacturer ?? "", fixture: machine,
+  // Never `part-1`. The parser numbers reported items from one, and this run keeps the parsed job on
+  // screen, so sharing that id makes the estimate label the confirmed candidate with an unrelated
+  // reported item and count that item as quoted. Measured: a confirmed vent repair displayed "pressure
+  // switch" beside it and the estimate recorded the pressure switch as covered.
+  return { id: "confirmed-1", description: confirmed.component, quantity, sku: "", equipment: machine, kind: "part", decided: true,
+    // The discovery query for an uncertain item is built from rawContext, so a findings note alone
+    // becomes the whole search: one live confirmation searched Exa for "Draft is normal. Switch has
+    // failed continuity." and named neither the machine nor the component. It names the work first.
+    intent: { rawContext: [machine, confirmed.component].filter(Boolean).join(" ") + (confirmed.findings ? `. Confirmed on site: ${confirmed.findings}` : ""),
+      manufacturer: confirmed.manufacturer ?? "", fixture: machine,
       suspectedPart: confirmed.component, subject: confirmed.component, ruledOut: [], supersedes: [],
       exactModel: "", route: "ambiguous", constraints: dedupeConstraints(confirmed.constraints ?? []) } };
 }
@@ -112,7 +127,11 @@ async function sourceParts(input: PipelineInput, incoming: JobPart[], signal: Ab
     if(groundedIdentifier(part)){ direct.push(subjectCandidate(part)); sourced.push(part.id); continue; }
     // Chosen, but with no designation to price against: "cartridge puller" names the right product and
     // no orderable model. Researched as a buying question against product pages rather than as a fault.
-    if(part.kind==="tool"||part.kind==="unit") chosen.push(part); else ambiguous.push(part);
+    // A repair the technician confirmed on site belongs here too. It used to go to the alternatives
+    // pass, which asks deep-lite to explore other product families and explicitly not to pick one —
+    // the wrong question for a component already tested and established, and it cost the more
+    // expensive call to ask it before the cheaper direct pass rescued the run.
+    if(part.decided||part.kind==="tool"||part.kind==="unit") chosen.push(part); else ambiguous.push(part);
   }
   emit("intent_routed",{exact:exact.map(p=>p.id),registry:fromRegistry,sourced,tools:chosen.map(p=>p.id),ambiguous:ambiguous.map(p=>p.id),superseded:superseded.map(s=>s.partId)});
   if(superseded.length) progress("understanding_input",`${superseded.length} reported ${superseded.length===1?"item is":"items are"} covered by another line and will not be quoted twice.`);

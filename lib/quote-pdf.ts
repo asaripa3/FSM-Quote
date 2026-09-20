@@ -25,7 +25,18 @@ function wrap(text: string, font: PDFFont, size: number, width: number) {
  */
 const FLOOR = 165;
 
-export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote: ReturnType<typeof buildQuote>, company = "", exclusions: QuoteExclusion[] = []) {
+/**
+ * The repair, when it needs no part.
+ *
+ * The research prompt is asked for a path that requires no replacement — an obstruction, a wiring
+ * fault — and returns them. Every confirmation then went to sourcing, and printing required a priced
+ * line, so the flow could dead-end on its own best answer: a correct "no candidate with a supported
+ * catalogue number" and no way to quote the work. An estimate with labour and no parts is an ordinary
+ * service call, so it prints, and it says on its face that no part was required.
+ */
+export type WorkPerformed = { component: string; findings: string };
+
+export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote: ReturnType<typeof buildQuote>, company = "", exclusions: QuoteExclusion[] = [], work: WorkPerformed | null = null) {
   const doc = await PDFDocument.create();
   const regular = await doc.embedFont(StandardFonts.Helvetica);
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
@@ -67,6 +78,12 @@ export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote:
   };
 
   startPage("first");
+  if (!lines.length && work) {
+    write("LABOR ONLY - NO REPLACEMENT PART REQUIRED", 48, y, 10, bold, blue); y -= 20;
+    for (const text of wrap(work.component, regular, 12, 499)) { write(text, 48, y, 12, bold); y -= 16; }
+    if (work.findings) { y -= 2; for (const text of wrap(`Confirmed on site: ${work.findings}`, regular, 10, 499)) { write(text, 48, y, 10, regular, muted); y -= 13; } }
+    y -= 8; rule(y); y -= 22;
+  }
   for (const line of lines) {
     // Current trade packs have short descriptions; wrapping keeps future copy inside its column.
     const rows = wrap(line.part.discovery.name, regular, 10, 310);
@@ -89,8 +106,11 @@ export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote:
   page.drawRectangle({ x: 270, y: y - 35, width: 277, height: 53, color: rgb(.93,.96,1) });
   write("ESTIMATED TOTAL", 285, y - 15, 10, bold, blue); right(money(quote.total), y - 17, 23, bold);
   y -= 72;
-  write("SUPPLIER REFERENCES", 48, y, 9, mono, muted);
-  for (const line of lines) { y -= 14; write(`${line.part.discovery.sku} - ${line.listing.domain}`, 48, y, 10); }
+  // An empty heading says less than no heading. A labour-only estimate references no supplier.
+  if (lines.length) {
+    write("SUPPLIER REFERENCES", 48, y, 9, mono, muted);
+    for (const line of lines) { y -= 14; write(`${line.part.discovery.sku} - ${line.listing.domain}`, 48, y, 10); }
+  } else y += 14;
   // Work the technician reported but this estimate does not price is stated on the estimate itself.
   // A customer reading only the total would otherwise have no way to know a repair was left out, and
   // the alternative - refusing to print until every fault is covered - would stop legitimate partial
@@ -121,8 +141,8 @@ export async function createQuotePdf(pack: TradePack, lines: QuoteLine[], quote:
   return doc.save();
 }
 
-export async function downloadQuotePdf(pack: TradePack, lines: QuoteLine[], quote: ReturnType<typeof buildQuote>, company = "", exclusions: QuoteExclusion[] = []) {
-  const bytes = await createQuotePdf(pack, lines, quote, company, exclusions);
+export async function downloadQuotePdf(pack: TradePack, lines: QuoteLine[], quote: ReturnType<typeof buildQuote>, company = "", exclusions: QuoteExclusion[] = [], work: WorkPerformed | null = null) {
+  const bytes = await createQuotePdf(pack, lines, quote, company, exclusions, work);
   const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/pdf" }));
   const link = document.createElement("a");
   link.href = url; link.download = `FSMpedia-${pack.id}-estimate.pdf`;

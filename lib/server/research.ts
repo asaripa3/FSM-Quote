@@ -143,6 +143,22 @@ export async function researchJob(
   const output = first.output.content as Record<string, unknown>;
 
   /**
+   * Nothing readable came back, so there is nothing to report about the equipment either way.
+   *
+   * Every claim below is bound to a retained page, and with no retained pages every claim is withheld
+   * — except the two that are not bound to anything: the summary and the list of checks. Left alone
+   * they render under "What the evidence says" over an empty source list, and the state banner reads
+   * "The documentation does not support the reported fault", which is a strong negative finding about
+   * a machine no page was read for. Measured with two manufacturer pages whose retrieved excerpts were
+   * both site navigation: zero sources kept, and a two-sentence summary and two checks still shown.
+   */
+  if (!sources.length) {
+    return { question, evidenceSummary: "", documentationUnavailable: true, fieldSourcesUnavailable,
+      contradicts: "", contradictsSupport: "", contradictsSourceUrls: [], checkBeforeReplacing: [],
+      repairPaths: [], sources: [], pagesRead: 0, trace };
+  }
+
+  /**
    * Bind a claim to a page that actually carries it.
    *
    * This is the same gate the price path uses: an excerpt is accepted only when a substantial run of
@@ -160,6 +176,10 @@ export async function researchJob(
   };
   const levelFrom = (found: ResearchSource[]): RepairPath["evidenceLevel"] =>
     found.some(s => s.kind === "oem") ? "oem"
+      // A mirrored service manual is not the manufacturer and is not a field report either. Both paths
+      // that survived a live run for the Carrier code were quoted out of manual mirrors and read as
+      // "Field reports only", which understates a service manual and overstates a forum post.
+      : found.some(s => s.kind === "mirror") ? "documented"
       : new Set(found.map(s => s.domain)).size > 1 ? "corroborated"
       : "field_only";
 

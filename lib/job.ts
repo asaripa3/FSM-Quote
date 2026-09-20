@@ -5,7 +5,14 @@ export type JobSettings = { company: string; laborRate: number; markupPercent: n
  * is a `unit`, and the thing to source is the appliance on the equipment plate.
  */
 export type PurchaseKind = "part" | "unit" | "tool";
-export type JobPart = { id: string; description: string; quantity: number; sku: string; equipment: string; kind?: PurchaseKind; intent?: PartIntent };
+export type JobPart = { id: string; description: string; quantity: number; sku: string; equipment: string; kind?: PurchaseKind; intent?: PartIntent;
+  /**
+   * The technician has already settled what this is; what is missing is a model that can be ordered.
+   * A repair confirmed on site is decided in exactly the way a named tool is, so it is researched as a
+   * buying question rather than diagnosed as a fault, and it is identified by the component itself
+   * rather than by whether the retrieved pages happen to name the whole machine.
+   */
+  decided?: boolean };
 /**
  * What the technician is looking at, and what they do not yet know.
  *
@@ -33,7 +40,8 @@ export type ParsedJob = { summary: string; equipment: string; laborHours: number
 
 /** How close a retrieved source comes to the machine in front of the technician. */
 export type ModelMatch = "exact" | "family" | "manufacturer" | "none";
-export type SourceKind = "oem" | "distributor" | "practitioner" | "forum" | "unknown";
+/** `mirror` is a host whose business is republishing other people's manuals: documentation, not the maker. */
+export type SourceKind = "oem" | "mirror" | "distributor" | "practitioner" | "forum" | "unknown";
 export type EvidenceStrength = "authoritative" | "corroborating" | "anecdotal";
 export type ResearchSource = { url: string; title: string; domain: string; highlight: string; kind: SourceKind; strength: EvidenceStrength; match: ModelMatch };
 /**
@@ -44,10 +52,19 @@ export type ResearchSource = { url: string; title: string; domain: string; highl
  * level is derived from those sources, never taken from the model's own label.
  */
 export type RepairPath = { component: string; rationale: string; confirmBy: string;
-  evidenceLevel: "oem" | "corroborated" | "field_only"; support: string; sourceUrls: string[] };
+  /** Derived from where the support was found. `documented` is a service manual on a host that is not the maker. */
+  evidenceLevel: "oem" | "documented" | "corroborated" | "field_only"; support: string; sourceUrls: string[] };
 export type ResearchPacket = { question: string; evidenceSummary: string;
   /** The practitioner top-up was attempted and did not return. The OEM packet still stands. */
   fieldSourcesUnavailable?: boolean;
+  /**
+   * Nothing readable survived retrieval, so there is no documentation to report either way.
+   *
+   * This is a different outcome from documentation that read the equipment and did not support the
+   * report, and it must not be shown as one: a summary and a list of checks with no page behind them
+   * is the generated-claim problem the support gate exists to remove, arriving through another field.
+   */
+  documentationUnavailable?: boolean;
   /** What the documentation does not support about the report itself, such as a code this unit lacks. */
   contradicts: string;
   /** The verbatim excerpt backing the contradiction, and where it was found. Both or neither. */
@@ -156,10 +173,18 @@ export type ProductSearchResult = { query: string; sources: SourceOption[]; trac
  * covered when a candidate answering it has been selected, whether or not other candidates for the
  * same fault were left alone.
  */
-export function uncoveredWork(job: ParsedJob | null, discovery: Discovery | null, isPicked: (candidateId: string) => boolean) {
+export function uncoveredWork(job: ParsedJob | null, discovery: Discovery | null, isPicked: (candidateId: string) => boolean,
+  answeredByConfirmation?: (reportedDescription: string) => boolean) {
   if (!job) return [];
   const covered = new Set((discovery?.parts ?? []).filter(r => isPicked(r.id)).flatMap(r => r.partIds));
-  return job.knownParts.filter(p => !covered.has(p.id)).map(p => ({
+  // A confirmed repair is sourced under its own id, so nothing it prices can ever match a reported
+  // item by id. Without this the estimate lists the very fault it just quoted as "not included": the
+  // note reports a pressure switch, the technician confirms the pressure switch, and the customer
+  // reads that the pressure switch was excluded. Matched on the work described, and only once
+  // something is actually priced.
+  const priced = (discovery?.parts ?? []).some(r => isPicked(r.id));
+  const answered = (p: JobPart) => Boolean(priced && answeredByConfirmation?.(p.description));
+  return job.knownParts.filter(p => !covered.has(p.id) && !answered(p)).map(p => ({
     label: p.description,
     reason: discovery?.superseded?.find(s => s.partId === p.id)?.reason
       ?? discovery?.unresolved.find(u => u.partId === p.id)?.reason

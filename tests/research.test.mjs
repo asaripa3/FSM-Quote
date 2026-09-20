@@ -13,8 +13,12 @@ test('a source is placed by where it came from, never by its file extension', ()
   // A manual mirrored on an unrecognised host is the sketchy-manual problem, not an OEM document.
   // One of the Lennox service manuals Exa returned in testing came from a Russian file host.
   assert.equal(kind('https://randommanuals123.com/files/48tc.pdf'), 'unknown');
-  assert.equal(kind('https://c-o-k.ru/library/lennox-lga090.pdf', '', 'Lennox'), 'unknown');
-  assert.equal(kind('https://www.manualslib.com/manual/1475043/Carrier-48TC.html', '', 'Lennox'), 'unknown');
+  assert.equal(kind('https://c-o-k.ru/library/lennox-lga090.pdf', '', 'Lennox'), 'mirror');
+  // A host whose business IS republishing manuals is its own class. Not the maker, and not a forum
+  // either: a live Carrier run backed both of its surviving repair paths out of manualsdir and
+  // manualslib, and labelling those "field reports" put a service manual beside a YouTube comment.
+  assert.equal(kind('https://www.manualslib.com/manual/1475043/Carrier-48TC.html', '', 'Lennox'), 'mirror');
+  assert.equal(kind('https://www.manualsdir.com/manuals/48tc/carrier.html'), 'mirror');
 
   assert.equal(kind('https://www.supplyhouse.com/products/pressure-switch'), 'distributor');
   assert.equal(kind('https://www.youtube.com/watch?v=abc'), 'practitioner');
@@ -48,14 +52,20 @@ test('authority needs the manufacturer AND the machine', () => {
   assert.equal(evidenceStrength('distributor', 'family'), 'corroborating');
   assert.equal(evidenceStrength('forum', 'exact'), 'anecdotal');
   assert.equal(evidenceStrength('unknown', 'exact'), 'anecdotal');
+  // A mirrored manual that names this machine corroborates. It is never authoritative: nothing
+  // establishes that the copy is complete, current, or the document it claims to be.
+  assert.equal(evidenceStrength('mirror', 'exact'), 'corroborating');
+  assert.equal(evidenceStrength('mirror', 'family'), 'corroborating');
+  assert.equal(evidenceStrength('mirror', 'none'), 'anecdotal');
   // Nothing tied to the equipment is authoritative, however official the host looks.
   assert.equal(evidenceStrength('oem', 'none'), 'anecdotal');
 });
 
 test('a retrieval missing a whole source class asks for one narrow second search', () => {
   // Measured on the first real run: nine manual mirrors, one carrier.com, no practitioner source.
+  assert.equal(missingPractitioner(['oem','mirror','mirror','mirror']), true);
+  assert.equal(missingPractitioner(['oem','mirror','practitioner']), false);
   assert.equal(missingPractitioner(['oem','unknown','unknown','unknown']), true);
-  assert.equal(missingPractitioner(['oem','unknown','practitioner']), false);
   // Nothing retrieved means nothing to top up; the failure is upstream.
   assert.equal(missingPractitioner([]), false);
 });

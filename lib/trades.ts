@@ -79,6 +79,14 @@ export type TradePack = {
     markupPercent: number;
     laborRate: number;
     /**
+     * Hours this trade's shop books for an ordinary call, used until the estimator edits it.
+     *
+     * The estimate panel labels the field "Shop default hours, editable" and used to open at zero,
+     * so it promised a default that did not exist and every uncertain job priced labour at $0.00
+     * until somebody noticed. Never taken from the web: a duration is the contractor's own rule.
+     */
+    laborHours: number;
+    /**
      * What this quote costs the business by hand today. These are ASSUMPTIONS,
      * surfaced and editable in the UI so a customer can re-run the value case
      * with their own numbers rather than being told ours.
@@ -127,6 +135,7 @@ export const TRADES: Record<TradeId, TradePack> = {
       preferredSuppliers: ["Ferguson", "Local Plumbing Supply", "Grainger"],
       markupPercent: 30,
       laborRate: 150,
+      laborHours: 0.75,
       baseline: {
         manualMinutesPerQuote: 22,
         tabsOpened: 8,
@@ -217,6 +226,7 @@ export const TRADES: Record<TradeId, TradePack> = {
       preferredSuppliers: ["Johnstone Supply", "Ferguson HVAC", "Grainger"],
       markupPercent: 30,
       laborRate: 165,
+      laborHours: 1.0,
       baseline: {
         manualMinutesPerQuote: 26,
         tabsOpened: 9,
@@ -280,6 +290,7 @@ export const TRADES: Record<TradeId, TradePack> = {
       preferredSuppliers: ["Graybar", "Rexel", "Grainger"],
       markupPercent: 28,
       laborRate: 155,
+      laborHours: 1.5,
       baseline: {
         manualMinutesPerQuote: 19,
         tabsOpened: 7,

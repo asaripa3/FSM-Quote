@@ -14,9 +14,22 @@ export async function POST(request: Request) {
   const raw=body.confirmed;
   const clamp=(v:unknown,max:number)=>typeof v==="string"?v.trim().slice(0,max):"";
   const component=clamp(raw?.component,200);
-  // The equipment and maker ride with the confirmation so the sourcing phase needs no model call at
-  // all, which makes a failed sourcing retryable on its own. Clamped like everything else from a client.
-  const confirmed=component?{component,findings:clamp(raw?.findings,1000),equipment:clamp(raw?.equipment,200),manufacturer:clamp(raw?.manufacturer,100)}:undefined;
+  // The equipment, maker, plate designation and stated requirements ride with the confirmation so the
+  // sourcing phase needs no model call at all, which makes a failed sourcing retryable on its own.
+  // All of it is clamped here and re-grounded against the note in the pipeline before it is used.
+  //
+  // The model and the constraints used to stop at this line: the client sent them, the pipeline read
+  // them, and this handler built an object without them, so every confirmed repair fell back to
+  // guessing the plate designation out of the note and reporting the technician's requirement under
+  // the field name "stated requirement" instead of "voltage".
+  const constraints=Array.isArray(raw?.constraints)?raw.constraints.slice(0,8).flatMap((entry:unknown)=>{
+    const c=entry&&typeof entry==="object"?entry as Record<string,unknown>:{};
+    const field=clamp(c.field,60),value=clamp(c.value,100);
+    return field&&value?[{field,value}]:[];
+  }):[];
+  const quantity=Number.isInteger(raw?.quantity)&&raw.quantity>0&&raw.quantity<=999?raw.quantity as number:undefined;
+  const confirmed=component?{component,findings:clamp(raw?.findings,1000),equipment:clamp(raw?.equipment,200),
+    manufacturer:clamp(raw?.manufacturer,100),model:clamp(raw?.model,100),constraints,quantity}:undefined;
   const abort=new AbortController();
   const signal=AbortSignal.any([request.signal,abort.signal,AbortSignal.timeout(285000)]);
   const encoder=new TextEncoder();

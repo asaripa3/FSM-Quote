@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import type { Brief, ModelMatch, ResearchPacket, ResearchSource } from "@/lib/job";
+import type { Brief, ModelMatch, RepairPath, ResearchPacket, ResearchSource } from "@/lib/job";
 
 /**
  * How close a source comes to this machine, said in words rather than implied by a shared badge.
@@ -19,6 +19,21 @@ const MATCH_LABEL: Record<ModelMatch, string> = {
 const hostOf = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
 
 const STRENGTH_LABEL = { authoritative: "Authoritative", corroborating: "Corroborating", anecdotal: "Unverified" } as const;
+
+/**
+ * Where the support for a path was found, said plainly.
+ *
+ * `documented` exists because the alternative was calling a mirrored service manual a field report. A
+ * live run for the Carrier code produced two paths, both quoted out of manualsdir and manualslib,
+ * which are copies of the Carrier manual; under the old three-level set both read "Field reports
+ * only", alongside whatever a forum thread would have produced.
+ */
+const LEVEL_LABEL: Record<RepairPath["evidenceLevel"], string> = {
+  oem: "OEM documented",
+  documented: "Service documentation, mirrored host",
+  corroborated: "Two sources agree",
+  field_only: "Field reports only",
+};
 
 function SourceRow({ source }: { source: ResearchSource }) {
   return (
@@ -57,11 +72,21 @@ export function EpistemicState({ packet, confirmed, busy }: { packet: ResearchPa
   );
   const best = packet.sources.find(s => s.strength === "authoritative") ?? packet.sources.find(s => s.match === "family" || s.match === "exact");
   const documented = packet.sources.filter(s => s.kind === "oem").length;
+  const mirrors = packet.sources.filter(s => s.kind === "mirror").length;
   // No repair paths is a finding, not an empty result. On the run this was written for, the
   // documentation established that the reported code does not exist on this equipment, which is more
   // useful to the technician than any candidate list would have been.
   const unsupported = packet.repairPaths.length === 0;
   const contradicted = Boolean(packet.contradicts);
+  // Retrieval failing and documentation disagreeing are different answers, and only one of them is
+  // about the equipment. Saying the second when the first happened is a negative finding about a
+  // machine no page was read for.
+  if (packet.documentationUnavailable) return (
+    <div className="epistemic unresolved" role="status">
+      <strong>No readable documentation came back</strong>
+      <span>Nothing was retrieved for this equipment, so there is nothing to report either way. Add the model from the plate or the fault code and research again, or say what you found and source it directly.</span>
+    </div>
+  );
   return (
     <div className={contradicted || unsupported ? "epistemic contradicted" : "epistemic researched"} role="status">
       <strong>{contradicted
@@ -73,6 +98,7 @@ export function EpistemicState({ packet, confirmed, busy }: { packet: ResearchPa
         {contradicted && packet.repairPaths.length > 0 && <li>{packet.repairPaths.length} paths listed for the symptom, not the reported code</li>}
         {unsupported && !contradicted && <li>No component is named until the fault is identified correctly</li>}
         {documented > 0 && <li>{documented} OEM {documented === 1 ? "document" : "documents"} retrieved</li>}
+        {mirrors > 0 && <li>{mirrors} mirrored service {mirrors === 1 ? "manual" : "manuals"}, host not the manufacturer</li>}
         {best && <li>{MATCH_LABEL[best.match]}</li>}
         {packet.checkBeforeReplacing.length > 0 && <li>{packet.checkBeforeReplacing.length} {unsupported ? "checks to identify it" : "checks recommended before replacement"}</li>}
       </ul>
@@ -97,8 +123,11 @@ export function ResearchPacketView({ brief, packet, onConfirm, busy }: {
   // technician is on site and the retrieval is not, so their finding outranks the candidate list.
   const component = chosen === OTHER || !packet.repairPaths.length ? typed.trim() : chosen;
   const official = packet.sources.filter(s => s.kind === "oem");
+  // Mirrors are shown, not tucked into a disclosure. On the live Carrier run they were the only pages
+  // backing a repair path, so collapsing them hid the best evidence of the run behind a triangle.
+  const mirrored = packet.sources.filter(s => s.kind === "mirror");
   const field = packet.sources.filter(s => s.kind === "practitioner" || s.kind === "forum");
-  const other = packet.sources.filter(s => !official.includes(s) && !field.includes(s));
+  const other = packet.sources.filter(s => !official.includes(s) && !mirrored.includes(s) && !field.includes(s));
 
   return (
     <div className="packet">
@@ -112,7 +141,9 @@ export function ResearchPacketView({ brief, packet, onConfirm, busy }: {
 
       <section className="packet-block">
         <h3>What the evidence says</h3>
-        <p className="packet-summary">{packet.evidenceSummary || "The retrieved documentation did not address this equipment directly."}</p>
+        <p className="packet-summary">{packet.documentationUnavailable
+          ? "No page survived retrieval on this run, so nothing is summarised here. Every claim in this packet has to be quotable from a page that was read, and there were none."
+          : packet.evidenceSummary || "The retrieved documentation did not address this equipment directly."}</p>
       </section>
 
       {packet.checkBeforeReplacing.length > 0 && (
@@ -133,7 +164,7 @@ export function ResearchPacketView({ brief, packet, onConfirm, busy }: {
                 <input type="radio" name="repair-path" value={path.component} checked={chosen === path.component} onChange={() => setChosen(path.component)} />
                 <span className="packet-path-body">
                   <strong>{path.component}</strong>
-                  <em data-level={path.evidenceLevel}>{path.evidenceLevel === "oem" ? "OEM documented" : path.evidenceLevel === "corroborated" ? "Two sources agree" : "Field reports only"}</em>
+                  <em data-level={path.evidenceLevel}>{LEVEL_LABEL[path.evidenceLevel]}</em>
                   <span>{path.rationale}</span>
                   {path.confirmBy && <span className="packet-confirm-by">Confirm by: {path.confirmBy}</span>}
                   {path.support && <blockquote>{path.support}<cite>{path.sourceUrls.map(hostOf).join(", ")}</cite></blockquote>}
@@ -152,6 +183,9 @@ export function ResearchPacketView({ brief, packet, onConfirm, busy }: {
       )}
 
       {official.length > 0 && <section className="packet-block"><h3>Official documentation</h3><ul className="packet-sources">{official.map(s => <SourceRow key={s.url} source={s} />)}</ul></section>}
+      {mirrored.length > 0 && <section className="packet-block"><h3>Service documentation, mirrored</h3>
+        <p className="packet-note">Manuals republished by sites that are not the manufacturer. Useful, and not proof of the current revision.</p>
+        <ul className="packet-sources">{mirrored.map(s => <SourceRow key={s.url} source={s} />)}</ul></section>}
       {field.length > 0 && <section className="packet-block"><h3>Field knowledge</h3><ul className="packet-sources">{field.map(s => <SourceRow key={s.url} source={s} />)}</ul></section>}
       {field.length === 0 && packet.fieldSourcesUnavailable && (
         <section className="packet-block"><h3>Field knowledge</h3>

@@ -519,3 +519,98 @@ test('uncertain Moen observations with parser questions automatically research w
  assert.ok(!calls.some(c=>c.body.category==='product'));
  assert.ok(events.find(e=>e.event==='research_complete').data.checkBeforeReplacing.length>0);
 });
+
+test('a confirmed repair is searched for by the work, not by the findings sentence',async t=>{
+ const calls=mockFetch(t);
+ await run('Carrier rooftop unit not cooling. Inducer runs, ignition does not proceed. Replacement switch must have a 120 V coil.\n\nEquipment plate: 48TCED08A2A6',
+   {component:'pressure switch',findings:'Draft is normal. Switch has failed continuity.',
+    equipment:'rooftop unit',manufacturer:'Carrier',model:'48TCED08A2A6',constraints:[{field:'voltage',value:'120 V'}]});
+ const discovery=calls.filter(c=>c.url.endsWith('/search')&&c.body.outputSchema?.properties?.parts);
+ // The discovery query for an uncertain item is composed from the item's own context, so a
+ // confirmation whose context was the findings alone searched Exa for "Draft is normal. Switch has
+ // failed continuity." and named neither the machine nor the component anywhere in the query.
+ assert.equal(discovery.length,1);
+ assert.match(discovery[0].body.query,/pressure switch/i);
+ assert.match(discovery[0].body.query,/48TCED08A2A6/);
+ assert.doesNotMatch(discovery[0].body.query,/Draft is normal/i);
+ // A component the technician has tested is decided. The alternatives pass explores other product
+ // families and is told not to pick one, which is the wrong question and the more expensive call.
+ assert.notEqual(discovery[0].body.type,'deep-lite');
+ assert.match(discovery[0].body.systemPrompt,/ITEMS ALREADY CHOSEN/);
+ assert.match(discovery[0].body.systemPrompt,/\[confirmed\] pressure switch/);
+ // The requirement keeps the name the technician's own note gave it. Carried through the route it
+ // reads "voltage 120 V"; recovered from the note because the route dropped it, "stated requirement".
+ assert.match(discovery[0].body.systemPrompt,/voltage 120 V/);
+});
+
+test('a confirmed repair is never filed under a reported item id',async t=>{
+ mockFetch(t);
+ const events=await run('Older Moen single handle shower drips; cartridge model unknown.',
+   {component:'Moen 1222 cartridge',findings:'Cartridge is seized.',equipment:'Moen shower',manufacturer:'Moen'});
+ const routed=events.find(e=>e.event==='intent_routed').data;
+ // The parser numbers reported items from one and the job stays on screen through confirmation, so
+ // sharing `part-1` made the estimate label this candidate with an unrelated reported item and count
+ // that item as quoted. Which route it takes depends on whether it names a model and on what this
+ // company has resolved before; that it is never `part-1` does not.
+ const ids=Object.values(routed).flat();
+ assert.deepEqual(ids,['confirmed-1']);
+ for(const id of events.find(e=>e.event==='discovery_complete').data.parts.flatMap(p=>p.partIds))
+   assert.equal(id,'confirmed-1');
+});
+
+test('a component the pages identify is not refused for failing to name the whole machine',async t=>{
+ const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ globalThis.fetch=async()=>Response.json({results:[{url:'https://supplyhouse.example/ps',title:'Pressure switch',
+   text:'Universal air pressure switch, order number PS-1234. Fits many furnace and rooftop applications.'}],
+   output:{content:{parts:[{name:'Pressure switch',manufacturer:'Generic',partNumber:'PS-1234',sku:'PS-1234',
+     coversFaults:['confirmed-1'],reason:'Matches the reported switch.',
+     evidence:'Universal air pressure switch, order number PS-1234.',conflicts:[],questions:[]}]}}});
+ const { discoverParts }=await import('../lib/server/discovery.ts');
+ const item={id:'confirmed-1',description:'pressure switch',equipment:'Carrier 48TCED08A2A6 packaged rooftop unit',sku:'',kind:'part',
+   intent:{rawContext:'x',manufacturer:'Carrier',fixture:'',suspectedPart:'',subject:'pressure switch',ruledOut:[],supersedes:[],exactModel:'',route:'ambiguous',constraints:[]}};
+ // The grounding check asks whether the retrieved pages mention the machine. That is right for a
+ // fault and wrong for a decided component: a genuine switch listing carries the switch's own
+ // identifiers, never a rooftop unit's plate designation, so the confirmed repair was refused outright.
+ assert.equal((await discoverParts([item])).parts.length,0);
+ assert.equal((await discoverParts([{...item,decided:true}])).parts.length,1);
+});
+
+test('documentation that could not be retrieved is not reported as documentation that disagrees',async t=>{
+ const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ globalThis.fetch=async()=>Response.json({
+   // Both results are on the manufacturer's own domain and both excerpts are site furniture, which
+   // is what a real Carrier run returned. Every page is dropped, and every claim below is bound to a
+   // page, except the summary and the checks — which then narrate a machine nothing was read for.
+   results:[{url:'https://www.carrier.com/search',title:'Document search',highlights:['Skip to main content Sign in Create an account My account Search by model number']},
+            {url:'https://www.carrier.com/literature',title:'Literature',highlights:['Add to cart View cart Checkout Newsletter Cookie Privacy policy All rights reserved']}],
+   output:{content:{evidenceSummary:'The 48TC IGC reports faults as 1 to 9 LED flashes and has no code 31.',
+     contradicts:'This equipment has no code 31.',contradictsSupport:'',
+     checkBeforeReplacing:['Read the IGC LED flash sequence'],repairPaths:[]}}});
+ const { researchJob }=await import('../lib/server/research.ts');
+ const packet=await researchJob({equipment:'rooftop unit',manufacturer:'Carrier',model:'48TCED08A2A6',serial:'',
+   faultCodes:['31'],symptoms:['not cooling'],alreadyChecked:[],stillUncertain:['cause unknown'],constraints:[],needsResearch:true},[]);
+ assert.equal(packet.documentationUnavailable,true);
+ assert.equal(packet.sources.length,0);
+ assert.equal(packet.evidenceSummary,'');
+ assert.deepEqual(packet.checkBeforeReplacing,[]);
+ assert.equal(packet.contradicts,'');
+});
+
+test('a mirrored service manual is neither the manufacturer nor a field report',async t=>{
+ const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ const quote='The IGC reports a pressure switch fault when the inducer proves no negative pressure at startup.';
+ globalThis.fetch=async()=>Response.json({
+   results:[{url:'https://www.manualslib.com/manual/48tc/carrier.html',title:'Carrier 48TC service manual',
+     highlights:[`Carrier 48TCED08A2A6 service instructions. ${quote} Inspect the hose for obstruction.`]}],
+   output:{content:{evidenceSummary:'x',contradicts:'',contradictsSupport:'',checkBeforeReplacing:[],
+     repairPaths:[{component:'Pressure switch hose',rationale:'A blocked hose prevents proof of draft.',
+       confirmBy:'Disconnect and inspect the hose.',support:quote}]}}});
+ const { researchJob }=await import('../lib/server/research.ts');
+ const packet=await researchJob({equipment:'rooftop unit',manufacturer:'Carrier',model:'48TCED08A2A6',serial:'',
+   faultCodes:['31'],symptoms:['not cooling'],alreadyChecked:[],stillUncertain:['cause unknown'],constraints:[],needsResearch:true},[]);
+ // A live Carrier run backed both of its surviving paths out of manualsdir and manualslib, copies of
+ // the Carrier manual, and both read "Field reports only" beside a source marked "Unverified".
+ assert.equal(packet.sources[0].kind,'mirror');
+ assert.equal(packet.sources[0].strength,'corroborating');
+ assert.equal(packet.repairPaths[0].evidenceLevel,'documented');
+});
