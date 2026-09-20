@@ -21,7 +21,7 @@ Field Service Management and MRO parts procurement: plumbing, HVAC, electrical a
 The note is parsed into reported items first. Each item is then routed to one of four destinations, and the workspace shows which:
 
 - **Exact part request.** The note names the replacement number, so the item goes straight to pricing.
-- **Resolved before.** A registry of past conclusions answers it, and it goes straight to pricing.
+- **Resolved before.** A conclusion this contractor's own technicians confirmed on an earlier job answers it, and it goes straight to pricing.
 - **Named tool.** The technician knows what they need, so Exa looks for a purchasable model rather than diagnosing a fault.
 - **Uncertain description.** Exa researches it against manufacturer and distributor pages first.
 
@@ -31,6 +31,30 @@ Exa does the work at two of those steps:
 2. **Price the part.** `POST /search` with `category: "product"`, then `POST /contents` with a structured schema, returning current supplier listings, price evidence, SKU, pack size, availability and product images.
 
 Quote arithmetic is deterministic and never delegated to a model. The local model never names a product; it decides what to ask.
+
+## Why there is no knowledge base
+
+Conventional retrieval assumes you already own the corpus: collected, chunked, embedded and
+maintained. That assumption does not survive contact with field service. A multi-trade technician
+meets equipment their company has never seen, and you cannot pre-load every manufacturer, model,
+revision, service bulletin, wiring diagram, error-code table and superseded SKU they will encounter
+over a decade of work.
+
+So FSMpedia assembles the knowledge base per job, live, from the open web. The long tail is the
+product, and that is what Exa is for.
+
+What does persist is the contractor's own business context, which is a different thing entirely:
+
+| Live through Exa, never stored | The contractor's own, stored |
+|---|---|
+| OEM manuals and service bulletins | Labour rates and markup rules |
+| Wiring diagrams and error-code tables | Preferred vendors and inventory |
+| Technician videos and field discussions | Jobs their technicians already confirmed |
+| Distributor pages, supersessions, prices | Customer and site history |
+
+Nothing technical ships with the app. The resolved-part registry starts empty for every company and
+fills only with conclusions their own technicians confirmed, which is why it is business context
+rather than a corpus.
 
 ## What is verified before you see it
 

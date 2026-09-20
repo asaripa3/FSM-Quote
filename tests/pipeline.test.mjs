@@ -217,22 +217,26 @@ test('an estimate too long for one page breaks instead of printing over its own 
 });
 
 test('a remembered part cannot answer for a different replacement number', async () => {
-  const { lookupPart } = await import('../lib/server/registry.ts');
-  // The shipped registry holds a Square D QO220CP: a two-pole 240 V breaker. A note asking for a
-  // QO120 shares every description word with it, so descriptor overlap matched and the estimate
-  // opened on the wrong breaker, labelled as resolved before and confirmed.
+  const { rememberPart, lookupPart } = await import('../lib/server/registry.ts');
+  // Nothing is pre-loaded, so the record has to be earned first: this is a conclusion the contractor's
+  // own technician confirmed, not a part conclusion shipped with the app.
   const breaker = (model) => ({id:'part-1',description:`Square D ${model} circuit breaker`,query:'',quantity:4,sku:model,equipment:'main panel',
-    intent:{rawContext:`order four Square D ${model} circuit breakers`,manufacturer:'Square D',fixture:'circuit breaker',symptom:'',
-      suspectedPart:'',possibleFamily:'QO series circuit breakers',exactModel:model,confidence:0,route:'ambiguous',constraints:[]}});
+    intent:{rawContext:`order four Square D ${model} circuit breakers`,manufacturer:'Square D',fixture:'circuit breaker',
+      suspectedPart:'',subject:`Square D ${model} circuit breaker`,ruledOut:[],supersedes:[],exactModel:model,route:'ambiguous',constraints:[]}});
+  rememberPart('electrical', breaker('QO220CP'), {id:'r1',partIds:['part-1'],name:'Square D QO 20 Amp 2-Pole Circuit Breaker',
+    manufacturer:'Square D',partNumber:'QO220CP',sku:'577014',reason:'',evidence:'20-amp double pole rating',verified:true,
+    sourceUrl:'https://example.test/qo220cp',sourceLabel:'example.test',supporting:[],searchQuery:'Square D QO220CP',
+    route:'ambiguous',confidence:'high',constraints:[],conflicts:[],questions:[]});
+
+  // The QO120 shares every description word with it and is a different breaker: one pole, not two.
   assert.equal(await lookupPart('electrical', breaker('QO120')), null);
   assert.equal((await lookupPart('electrical', breaker('QO220CP')))?.model, 'QO220CP');
 
-  // A designation that names the equipment rather than the replacement still reaches its repair kit:
-  // "Sloan Royal 111" is the flushometer, and the part that fixes it is a V-651-A.
+  // A fresh trade has nothing remembered at all, because nothing ships pre-loaded.
   const flushometer = {id:'part-1',description:'flushometer keeps running after flush',query:'',quantity:1,sku:'',equipment:'Sloan Royal 111 flushometer',
-    intent:{rawContext:'Royal 111 flushometer keeps running after flush',manufacturer:'Sloan',fixture:'Royal 111 flushometer',symptom:'keeps running after flush',
-      suspectedPart:'vacuum breaker sleeve',possibleFamily:'',exactModel:'',confidence:0.5,route:'ambiguous',constraints:[]}};
-  assert.equal((await lookupPart('plumbing', flushometer))?.model, 'V-651-A');
+    intent:{rawContext:'Royal 111 flushometer keeps running after flush',manufacturer:'Sloan',fixture:'Royal 111 flushometer',
+      suspectedPart:'vacuum breaker sleeve',subject:'vacuum breaker sleeve',ruledOut:[],supersedes:[],exactModel:'',route:'ambiguous',constraints:[]}};
+  assert.equal(await lookupPart('plumbing', flushometer), null);
 });
 
 test('work the estimate does not cover is recorded rather than blocking the print', async () => {

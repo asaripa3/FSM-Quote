@@ -1,18 +1,27 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { Constraint, JobPart, ResolvedPart } from "@/lib/job";
 import { dedupeConstraints } from "@/lib/intent";
 
 /**
- * Resolved Part Registry.
+ * Resolved Part Registry: this contractor's own confirmed conclusions, and nothing else.
  *
- * This is not a cache of prompt output. Memoising an LLM response keyed on note text would hit almost
- * never — two technicians describe the same fault differently — and would go stale invisibly.
+ * Deliberately not a technical knowledge base. The premise of the product is that the technician will
+ * meet equipment and faults their company has never seen, so world knowledge - manuals, bulletins,
+ * wiring diagrams, supersessions - is assembled live from the web for that job rather than collected,
+ * chunked and maintained in advance. A corpus of part conclusions shipped with the app would be
+ * exactly the pre-collected knowledge base this design rejects, and three such records used to ship
+ * here: they had been mined from supplier pages, no technician had confirmed them, and one of them
+ * answered a request for a Square D QO120 with a QO220CP, which is a different breaker.
+ *
+ * What legitimately persists is business context: labour rates, markup, preferred vendors, and jobs
+ * this contractor has actually resolved before. That is what this holds.
+ *
+ * This is not a cache of prompt output either. Memoising an LLM response keyed on note text would hit
+ * almost never — two technicians describe the same fault differently — and would go stale invisibly.
  *
  * What is worth keeping is the *conclusion*: that "older Moen single-handle shower, dripping after
  * shutoff" resolves to a Moen 1222 cartridge, with the evidence that established it and the date it was
- * last confirmed. The second technician with that symptom skips discovery entirely and goes straight to
- * product search, which is the routing rule in the plan:
+ * last confirmed. The second technician at that company with that symptom skips discovery entirely and
+ * goes straight to product search, which is the routing rule in the plan:
  *
  *     known part, high confidence  -> Exa product search directly
  *     unknown / ambiguous          -> Exa discovery -> resolve -> save canonical part
@@ -47,7 +56,7 @@ const NOISE = new Set(["the","and","for","with","a","an","of","in","on","is","it
 /**
  * The key is built from the technician's own wording, never from the resolved part. A record written
  * under "Sloan Valve Company" could never be read back by a note that says "Sloan", so both sides use
- * the parsed intent and nothing else. Exported so the seed is generated with this exact function.
+ * the parsed intent and nothing else.
  */
 export function registryKey(trade: string, subject: string, context: string, manufacturer: string) {
   const words = [...new Set(`${manufacturer} ${subject} ${context}`.split(/\s+/).map(strip).filter(w => w && !NOISE.has(w)))].sort();
@@ -71,24 +80,13 @@ function descriptorFor(part: JobPart) {
   };
 }
 
-/** Records shipped with the app: resolutions already confirmed against manufacturer documentation. */
-let seeded: Map<string, RegistryRecord> | undefined;
-async function seed() {
-  if (seeded) return seeded;
-  seeded = new Map();
-  try {
-    const raw = await readFile(join(process.cwd(), "lib", "server", "registry.seed.json"), "utf8");
-    for (const record of JSON.parse(raw) as RegistryRecord[]) seeded.set(record.canonicalPartId, record);
-  } catch { /* An absent or unreadable seed simply means an empty registry. */ }
-  return seeded;
-}
-
 /**
  * Records learned during this deployment's lifetime.
  *
  * A serverless instance is short-lived and there are several of them, so this survives a warm instance
- * and nothing more. Durable learning wants a shared store (Vercel KV, Postgres); the interface below is
- * the only thing that would change, and the seed file is how a confirmed resolution is promoted today.
+ * and nothing more. Durable learning wants a shared store (Vercel KV, Postgres) scoped to the
+ * contractor; the interface below is the only thing that would change. Nothing is pre-loaded: the
+ * registry starts empty for every company and fills only with what their technicians confirm.
  */
 const learned = new Map<string, RegistryRecord>();
 
@@ -150,9 +148,7 @@ export async function lookupPart(trade: string, part: JobPart): Promise<Registry
   const key = registryKey(trade, subject, context, manufacturer);
   const wanted = descriptorTokens(subject, context, manufacturer);
   const wantedSubject = descriptorTokens(subject, "", "");
-  const record = learned.get(key) ?? (await seed()).get(key)
-    ?? bestMatch(learned.values(), trade, wanted, wantedSubject, manufacturer)
-    ?? bestMatch((await seed()).values(), trade, wanted, wantedSubject, manufacturer);
+  const record = learned.get(key) ?? bestMatch(learned.values(), trade, wanted, wantedSubject, manufacturer);
   if (!record || isStale(record)) return null;
   // The replacement number the technician gave, if they gave one, settles which part this is.
   const stated = [intent?.exactModel, part.sku].map(v => strip(String(v ?? ""))).filter(Boolean);
@@ -210,7 +206,7 @@ export function rememberPart(trade: string, part: JobPart, resolved: ResolvedPar
   });
 }
 
-/** Note that a remembered record was used, so a promoted seed can be ordered by real usage. */
+/** Note that a remembered record was used, so the busiest conclusions can be found later. */
 export function creditHit(record: RegistryRecord) {
   const current = learned.get(record.canonicalPartId) ?? record;
   learned.set(record.canonicalPartId, { ...current, hits: current.hits + 1 });
