@@ -150,6 +150,11 @@ export function ResearchPacketView({ brief, packet, onConfirm, busy }: {
 
       {official.length > 0 && <section className="packet-block"><h3>Official documentation</h3><ul className="packet-sources">{official.map(s => <SourceRow key={s.url} source={s} />)}</ul></section>}
       {field.length > 0 && <section className="packet-block"><h3>Field knowledge</h3><ul className="packet-sources">{field.map(s => <SourceRow key={s.url} source={s} />)}</ul></section>}
+      {field.length === 0 && packet.fieldSourcesUnavailable && (
+        <section className="packet-block"><h3>Field knowledge</h3>
+          <p className="packet-note">Field sources could not be retrieved on this run. The documentation above is unaffected.</p>
+        </section>
+      )}
       {other.length > 0 && (
         <details className="packet-block packet-other">
           <summary>Other sources retrieved ({other.length})</summary>

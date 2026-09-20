@@ -12,8 +12,11 @@ export async function POST(request: Request) {
   // The technician's confirmation is client-supplied and therefore untrusted: clamped like the note,
   // and it reaches a prompt only as quoted observation, never as instruction.
   const raw=body.confirmed;
-  const component=typeof raw?.component==="string"?raw.component.trim().slice(0,200):"";
-  const confirmed=component?{component,findings:typeof raw?.findings==="string"?raw.findings.trim().slice(0,1000):""}:undefined;
+  const clamp=(v:unknown,max:number)=>typeof v==="string"?v.trim().slice(0,max):"";
+  const component=clamp(raw?.component,200);
+  // The equipment and maker ride with the confirmation so the sourcing phase needs no model call at
+  // all, which makes a failed sourcing retryable on its own. Clamped like everything else from a client.
+  const confirmed=component?{component,findings:clamp(raw?.findings,1000),equipment:clamp(raw?.equipment,200),manufacturer:clamp(raw?.manufacturer,100)}:undefined;
   const abort=new AbortController();
   const signal=AbortSignal.any([request.signal,abort.signal,AbortSignal.timeout(285000)]);
   const encoder=new TextEncoder();

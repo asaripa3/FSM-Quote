@@ -35,11 +35,16 @@ export function Workflow({pack}:{pack:TradePack}) {
  const cancelResearch=()=>{runController.current?.abort();setSearches(current=>Object.fromEntries(Object.entries(current).map(([id,value])=>[id,value.loading?{...value,loading:false,error:"Search stopped. Retry this supplier search."}:value])));};
  const analyze=async(confirmation?:Confirmation)=>{
   runController.current?.abort();const c=new AbortController();runController.current=c;requests.current.add(c);
-  setError("");setBusy(true);setStage("parsing");setJob(null);setDiscovery(null);setPicks({});setSearches({});setTrace([]);setEvents([]);setRoutes(null);setQuantities({});
-  // A new capture clears the research; confirming keeps it on screen beside what it produced.
-  if(confirmation){setConfirmed(confirmation);}else{setPacket(null);setConfirmed(null);}
+  setError("");setBusy(true);setStage("parsing");setRoutes(null);
+  // Every run starts from a clean cart, so a retry can never leave two sets of candidates or two
+  // priced rows behind. What it must not clear is what the technician already established: confirming
+  // or retrying a sourcing run keeps the job, the research packet and the confirmation on screen.
+  setDiscovery(null);setPicks({});setSearches({});setQuantities({});
+  if(confirmation){setConfirmed(confirmation);setTrace(t=>t);}
+  else{setJob(null);setPacket(null);setConfirmed(null);setTrace([]);setEvents([]);}
   try{
-   const response=await fetch("/api/quote-stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade:pack.id,note:plate.trim()?`${note.trim()}\n\nEquipment plate: ${plate.trim()}`:note,confirmed:confirmation,settings:{supplierDomains:settings.supplierDomains,region:settings.region,preferredDomains:settings.preferredDomains||""}}),signal:c.signal});
+   const response=await fetch("/api/quote-stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade:pack.id,note:plate.trim()?`${note.trim()}\n\nEquipment plate: ${plate.trim()}`:note,
+    confirmed:confirmation&&{...confirmation,equipment:job?.brief.equipment??"",manufacturer:job?.brief.manufacturer??""},settings:{supplierDomains:settings.supplierDomains,region:settings.region,preferredDomains:settings.preferredDomains||""}}),signal:c.signal});
    // The parsed job is needed again when discovery lands, before React has re-rendered with it.
    let parsed:ParsedJob|null=null;
    await readEventStream(response,(event,payload)=>{
@@ -54,7 +59,9 @@ export function Workflow({pack}:{pack:TradePack}) {
     else if(event==="supplier_error"){const data=payload as {partId:string;error:string};setSearches(s=>({...s,[data.partId]:{...s[data.partId],loading:false,error:data.error}}));}
     else {const data=payload as PipelineProgress;if(data.stage)setEvents(e=>[...e,data]);}
    });
-  }catch(e){setError(c.signal.aborted?"Research stopped. Completed results are still available.":e instanceof Error?e.message:"Could not research this note.");setSearches(s=>Object.fromEntries(Object.entries(s).map(([id,v])=>[id,v.loading?{...v,loading:false,error:"Research interrupted. Retry this search."}:v])));}
+  }catch(e){setError(c.signal.aborted?"Research stopped. Completed results are still available."
+    :confirmation?`Sourcing ${confirmation.component} did not finish. Your confirmation is kept; retry sourcing without re-running the research.`
+    :e instanceof Error?e.message:"Research is temporarily unavailable. Your note is kept, retry when ready.");setSearches(s=>Object.fromEntries(Object.entries(s).map(([id,v])=>[id,v.loading?{...v,loading:false,error:"Research interrupted. Retry this search."}:v])));}
   finally{requests.current.delete(c);if(runController.current===c){setBusy(false);setStage("");runController.current=null;}}
  };
  const research=()=>analyze(confirmed??undefined);
@@ -76,7 +83,9 @@ export function Workflow({pack}:{pack:TradePack}) {
     <div className="input-tabs" role="group" aria-label="Input method">{([["note","Type a note"],["audio","Upload audio"],["mic","Use microphone"]] as const).map(([id,label])=><button key={id} aria-pressed={mode===id} className={mode===id?"active":""} onClick={()=>setMode(id)}>{label}</button>)}</div>
     {mode!=="note"&&!busy&&!job&&<AudioInput key={mode} mode={mode} onTranscript={appendTranscript}/>}
     <label className="note-label">{mode==="note"?"What you found on site":"Transcript — review and edit"}<textarea value={note} onChange={e=>setNote(e.target.value)} disabled={busy||!!job} rows={5} maxLength={12000} placeholder="The equipment, what it is doing, any fault code, and what you have already checked. You do not need to know the answer."/></label>
-        <div className="note-actions">{job?<button className="secondary-button" disabled={busy||inSearch} onClick={()=>{setJob(null);setDiscovery(null);setSearches({});setPicks({});setEvents([]);setTrace([]);}}>Start again</button>:<button className="primary-button" disabled={busy||note.trim().length<12} onClick={()=>analyze()}>{busy?"Reading…":"Research this job"}<span>→</span></button>}</div>{error&&<p className="form-error" role="alert">{error}</p>}</div></section>
+        <div className="note-actions">{job?<button className="secondary-button" disabled={busy||inSearch} onClick={()=>{setJob(null);setDiscovery(null);setSearches({});setPicks({});setEvents([]);setTrace([]);}}>Start again</button>:<button className="primary-button" disabled={busy||note.trim().length<12} onClick={()=>analyze()}>{busy?"Reading…":"Research this job"}<span>→</span></button>}</div>{error&&<div className="form-error" role="alert"><p>{error}</p>
+     <button className="text-button" disabled={busy} onClick={()=>analyze(confirmed??undefined)}>
+      ↻ {confirmed?`Retry sourcing ${confirmed.component}`:packet?"Retry research":"Try again"}</button></div>}</div></section>
    {job?<section className="job-card"><header><div><span className="section-number">02</span><h2>{discovery?"Your parts list":packet?"What the evidence says":"Reading your note"}</h2></div><span>{discovery&&discovery.pagesScanned>0?`${discovery.pagesScanned} pages read`:""}</span></header><div className="job-card-body">
     <NoteReplay note={note} job={job} collapsed={!!(discovery||packet)&&!busy}/>
     <EpistemicState packet={packet} confirmed={confirmed} busy={busy}/>

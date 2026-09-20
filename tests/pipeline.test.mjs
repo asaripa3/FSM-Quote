@@ -446,3 +446,46 @@ test('a fault the documentation contradicts is stated as a correction, not burie
  assert.match(packet.checkBeforeReplacing[0],/LED/);
  assert.ok(events.some(e=>e.event==='awaiting_confirmation'));
 });
+
+test('sourcing a confirmed repair spends no model call, so a failed retry costs nothing extra',async t=>{
+ const calls=mockFetch(t);
+ await run('Older Moen single handle shower drips; cartridge model unknown.',
+   {component:'Moen 1222 cartridge',findings:'Valve body stamp reads Posi-Temp.',equipment:'Moen shower',manufacturer:'Moen'});
+ // The note was understood in phase one and the technician has since decided what phase one could not.
+ // Re-reading it would spend a call to rediscover the confirmation, and add a second place a retry
+ // could fail. Retrying sourcing must not re-run the diagnosis.
+ assert.equal(calls.filter(c=>c.url.includes('chat/completions')).length,0);
+ assert.ok(calls.some(c=>c.url.endsWith('/search')&&c.body.category==='product'));
+});
+
+test('a failed practitioner top-up keeps the documentation packet and says what was lost',async t=>{
+ const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ let searches=0;
+ globalThis.fetch=async(url,init)=>{
+  const body=JSON.parse(init.body);
+  if(String(url).includes('chat/completions'))return Response.json({choices:[{message:{content:JSON.stringify({summary:'Rooftop',equipment:'Carrier rooftop unit',laborHours:null,
+    brief:{equipment:'Carrier rooftop unit',manufacturer:'Carrier',model:'',serial:'',faultCodes:['5 flashes'],symptoms:['burners never light'],alreadyChecked:[],stillUncertain:['switch not tested']},
+    parts:[],questions:[]})}}]});
+  if(String(url).endsWith('/search')&&body.outputSchema?.properties?.repairPaths){searches++;return Response.json({requestId:'r',costDollars:{total:.007},
+    results:[{url:'https://www.carrier.com/48tc.pdf',title:'48TC manual',highlights:['Five flashes indicates an ignition lockout fault.']}],
+    output:{content:{evidenceSummary:'Five flashes is an ignition lockout.',contradicts:'',checkBeforeReplacing:['Check the igniter gap'],
+      repairPaths:[{component:'Igniter',rationale:'Documented cause.',confirmBy:'Measure the gap.',evidenceLevel:'oem'}]}}});}
+  // The top-up is the only call that fails.
+  if(String(url).endsWith('/search'))throw Error('field search timed out');
+  throw Error('unexpected '+url);
+ };
+ const events=[];
+ const response=await POST(new Request('http://localhost/api/quote-stream',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({trade:'hvac',note:'Carrier rooftop unit. Five flashes on the board. Burners never light. Switch not tested.',settings:{region:'United States',supplierDomains:''}})}));
+ await readEventStream(response,(event,data)=>events.push({event,data}));
+ const packet=events.find(e=>e.event==='research_complete').data;
+
+ // The run is not a failure: the documentation stands, and the gap is stated rather than left blank.
+ assert.equal(searches,1);
+ assert.equal(packet.fieldSourcesUnavailable,true);
+ assert.match(packet.evidenceSummary,/ignition lockout/);
+ assert.equal(packet.repairPaths.length,1);
+ assert.equal(packet.sources.length,1);
+ assert.ok(events.some(e=>e.event==='awaiting_confirmation'));
+ assert.ok(!events.some(e=>e.event==='error'));
+});

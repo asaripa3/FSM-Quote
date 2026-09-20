@@ -103,6 +103,7 @@ export async function researchJob(
   const sources = collect(first.results ?? [], brief, suppliers, seen);
 
   // Only when a whole class is absent, never routinely.
+  let fieldSourcesUnavailable = false;
   if (missingPractitioner(sources.map(s => s.kind))) {
     progress?.("reading_documentation", "Documentation found, but no technician account of this failure. Searching field sources.");
     started = Date.now();
@@ -115,7 +116,12 @@ export async function researchJob(
         searchType: String(second.resolvedSearchType || "auto"), results: (second.results ?? []).length,
         costDollars: second.costDollars?.total ?? null, ms: Date.now() - started, requestId: second.requestId });
       sources.push(...collect(second.results ?? [], brief, suppliers, seen));
-    } catch { if (signal?.aborted) signal.throwIfAborted(); /* The packet stands without the top-up. */ }
+    } catch {
+      if (signal?.aborted) signal.throwIfAborted();
+      // The documentation packet stands on its own. Say the top-up failed rather than leaving the
+      // technician to wonder why there is no field knowledge section.
+      fieldSourcesUnavailable = true;
+    }
   }
 
   const output = (first.output?.content ?? {}) as Record<string, unknown>;
@@ -131,6 +137,7 @@ export async function researchJob(
   return {
     question,
     evidenceSummary: text(output.evidenceSummary, 1200),
+    fieldSourcesUnavailable,
     contradicts: text(output.contradicts, 600),
     checkBeforeReplacing: list(output.checkBeforeReplacing, 8),
     repairPaths,

@@ -1,4 +1,4 @@
-import type { Brief, Confirmation, Discovery, JobPart, JobSettings, ParsedJob, PipelineStage, ResolvedPart } from "@/lib/job";
+import type { Confirmation, Discovery, JobPart, JobSettings, PipelineStage, ResolvedPart } from "@/lib/job";
 import { exactCandidate, groundedIdentifier, splitSupersededWork, subjectCandidate } from "@/lib/intent";
 import { parseInspection } from "./input";
 import { discoverParts } from "./discovery";
@@ -43,22 +43,26 @@ export async function runQuotePipeline(input: PipelineInput, signal: AbortSignal
 
   // The note already decided. Price what it named, and say so.
   progress("understanding_input", "The note already names what to order, so nothing needs researching first.");
-  await sourceParts(input, job, job.knownParts, signal, emit, progress);
+  await sourceParts(input, job.knownParts, signal, emit, progress);
 }
 
-/** Phase two: the technician ran the checks and said what they found. */
+/**
+ * Phase two: the technician ran the checks and said what they found.
+ *
+ * No model call. The note was already understood in phase one and the technician has since made the
+ * decision it could not, so re-reading the note would spend a call to rediscover what the
+ * confirmation already states, and would add a second place a retry could fail. Sourcing a confirmed
+ * repair is now retryable on its own without touching the research that produced it.
+ */
 async function sourceConfirmedRepair(input: PipelineInput, confirmed: Confirmation, signal: AbortSignal, emit: Emit, progress: (s:PipelineStage,m:string,p?:string)=>void) {
-  progress("understanding_input", `Confirmed on site: ${confirmed.component}. Sourcing it now.`);
-  const job = await parseInspection(input.trade, `${input.note}\n\nThe technician has since confirmed: ${confirmed.component} needs replacing. ${confirmed.findings}`, signal);
-  emit("job_parsed", job);
-  // The confirmed component is the subject whatever the re-parse made of it; the technician decided.
-  const named = job.knownParts.length ? job.knownParts : [confirmedPart(confirmed, job.brief)];
-  await sourceParts(input, job, named, signal, emit, progress);
+  progress("understanding_input", `Confirmed on site: ${confirmed.component}. Sourcing it now, no re-diagnosis.`);
+  await sourceParts(input, [confirmedPart(confirmed)], signal, emit, progress);
 }
 
-function confirmedPart(confirmed: Confirmation, brief: Brief): JobPart {
-  return { id: "part-1", description: confirmed.component, quantity: 1, sku: "", equipment: brief.equipment, kind: "part",
-    intent: { rawContext: confirmed.findings, manufacturer: brief.manufacturer, fixture: brief.equipment,
+function confirmedPart(confirmed: Confirmation): JobPart {
+  const equipment = confirmed.equipment ?? "";
+  return { id: "part-1", description: confirmed.component, quantity: 1, sku: "", equipment, kind: "part",
+    intent: { rawContext: confirmed.findings, manufacturer: confirmed.manufacturer ?? "", fixture: equipment,
       suspectedPart: confirmed.component, subject: confirmed.component, ruledOut: [], supersedes: [],
       exactModel: "", route: "ambiguous", constraints: [] } };
 }
@@ -66,14 +70,14 @@ function confirmedPart(confirmed: Confirmation, brief: Brief): JobPart {
 const supplierList = (input: PipelineInput) =>
   String(input.settings.preferredDomains ?? "").split(/[\s,]+/).map(d => d.toLowerCase()).filter(Boolean);
 
-async function sourceParts(input: PipelineInput, job: ParsedJob, incoming: JobPart[], signal: AbortSignal, emit: Emit, progress: (s:PipelineStage,m:string,p?:string)=>void) {
+async function sourceParts(input: PipelineInput, incoming: JobPart[], signal: AbortSignal, emit: Emit, progress: (s:PipelineStage,m:string,p?:string)=>void) {
   const { remaining, superseded } = splitSupersededWork(incoming);
   const exact=remaining.filter(p=>p.intent?.route==="exact");
   const direct: ResolvedPart[]=exact.map(exactCandidate);
   // A description already resolved for this equipment and symptom does not need researching again:
   // the registry answers it and the run goes straight to pricing. Stale or under-specified records
   // return nothing, so the part falls through to discovery as usual.
-  const ambiguous: typeof job.knownParts=[]; const fromRegistry: string[]=[]; const chosen: typeof job.knownParts=[]; const sourced: string[]=[];
+  const ambiguous: JobPart[]=[]; const fromRegistry: string[]=[]; const chosen: JobPart[]=[]; const sourced: string[]=[];
   for(const part of remaining.filter(p=>p.intent?.route!=="exact")){
     const record=await lookupPart(input.trade,part);
     if(record){ creditHit(record); direct.push(candidateFromRecord(record,part)); fromRegistry.push(part.id); continue; }

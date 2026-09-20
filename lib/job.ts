@@ -37,10 +37,12 @@ export type ResearchSource = { url: string; title: string; domain: string; highl
 /** A component the documentation associates with this failure. Not a diagnosis, and not a purchase. */
 export type RepairPath = { component: string; rationale: string; confirmBy: string; evidenceLevel: "oem" | "corroborated" | "field_only" };
 export type ResearchPacket = { question: string; evidenceSummary: string;
+  /** The practitioner top-up was attempted and did not return. The OEM packet still stands. */
+  fieldSourcesUnavailable?: boolean;
   /** What the documentation does not support about the report itself, such as a code this unit lacks. */
   contradicts: string; checkBeforeReplacing: string[]; repairPaths: RepairPath[]; sources: ResearchSource[]; pagesRead: number; trace: ExaTrace[] };
 /** What the technician found when they ran the checks. The gate everything downstream waits on. */
-export type Confirmation = { component: string; findings: string };
+export type Confirmation = { component: string; findings: string; equipment?: string; manufacturer?: string };
 export type SourceOption = { title: string; supplier: string; url: string; domain: string; price: number | null; currency: string; priceEvidence: string; sku: string; availability: string; image: string; retrievedAt: string; priceStatus?: "page-extracted" | "cached-page" | "needs-review"; currencyAssumed?: boolean; packQuantity?: number | null; packEvidence?: string; identityEvidence?: string; contentHash?: string; matchStatus?: "exact" | "needs-review" | "rejected"; conflicts?: string[]; missingChecks?: string[]; rankReason?: string; availabilityEvidence?: string };
 /** What Exa + the model concluded actually fixes the fault, before any price is looked up. */
 export type ResolvedPart = {
