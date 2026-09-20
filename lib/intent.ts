@@ -110,3 +110,35 @@ export function describesSameWork(a: string, b: string) {
   const [small, large] = left.size <= right.size ? [left, right] : [right, left];
   return [...small].filter(t => large.has(t)).length / small.size >= 0.6;
 }
+
+/**
+ * Split the reported items into the work that will be sourced and the work another line already covers.
+ *
+ * A decision the technician announced comes first. "Replace the unit rather than repair the motor"
+ * means the motor is not a second thing to buy, and researching or pricing it would put the same
+ * repair on the estimate twice under two names. This also decides whether anything still needs
+ * researching, so it has to run before that question is asked rather than after.
+ */
+export function splitSupersededWork(parts: JobPart[]) {
+  const supersessions = [
+    ...parts.flatMap(p => (p.intent?.supersedes ?? []).map(s => ({ ...s, by: p.id }))),
+    // The model states the supersession on some runs and not others. Whole-unit replacement implies
+    // it regardless: if the technician is replacing the appliance, the component that failed inside
+    // it is not a second thing to buy, whether or not the extraction thought to say so.
+    ...parts.filter(p => p.kind === "unit").flatMap(p => {
+      const covers = [p.intent?.suspectedPart ?? "", ...(p.intent?.ruledOut ?? [])].filter(Boolean);
+      return covers.map(subject => ({ subject,
+        reason: `Covered by replacing the ${p.intent?.subject || p.description} rather than repairing it.`,
+        by: p.id }));
+    }),
+  ];
+  const superseded: { partId: string; reason: string }[] = [];
+  const remaining = parts.filter(part => {
+    const replaced = supersessions.find(s => s.by !== part.id
+      && (describesSameWork(s.subject, part.description) || describesSameWork(s.subject, part.intent?.subject ?? "")));
+    if (!replaced) return true;
+    superseded.push({ partId: part.id, reason: replaced.reason });
+    return false;
+  });
+  return { remaining, superseded };
+}

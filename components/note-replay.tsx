@@ -15,7 +15,7 @@ const STOP = new Set(["the","and","for","with","from","that","this","have","has"
 function terms(job: ParsedJob) {
   const raw = [
     ...job.equipment.split(/[\s,;/]+/),
-    ...job.parts.flatMap(p => [p.sku, ...p.description.split(/[\s,;]+/), ...p.equipment.split(/[\s,;]+/)]),
+    ...job.knownParts.flatMap(p => [p.sku, ...p.description.split(/[\s,;]+/), ...p.equipment.split(/[\s,;]+/)]),
   ];
   const seen = new Set<string>();
   const out: string[] = [];

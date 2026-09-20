@@ -16,7 +16,9 @@ export async function readEventStream(response: Response, onEvent:(event:string,
         if(!data)continue;
         const payload=JSON.parse(data);
         if(event==="error")throw new Error(payload.error||"Research failed.");
-        if(event==="complete")completed=true;
+        // Two terminal events now: a finished job, and a research phase that has done its work and
+        // is waiting on the technician. Both are a complete stream, not a dropped connection.
+        if(event==="complete"||event==="awaiting_confirmation")completed=true;
         onEvent(event,payload);
       }
       if(done)break;

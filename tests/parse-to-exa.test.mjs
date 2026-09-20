@@ -121,11 +121,11 @@ test("a ~1000-word note is sent in full to LiveKit chat completions, not regex-s
   assert.match(call.body.messages[0].content, /extract a plumbing field inspection into JSON/i);
   assert.equal(call.body.messages[1].role, "user");
   assert.equal(call.body.messages[1].content, note, "the entire note is the user message — no regex chunking");
-  assert.equal(parsed.parts.length, 2);
+  assert.equal(parsed.knownParts.length, 2);
   assert.equal(parsed.laborHours, 0.75);
   // What the pipeline actually routes on: a description, the equipment it sits on, and the intent.
-  assert.ok(parsed.parts.every((p) => typeof p.description === "string" && p.description.length > 3));
-  assert.ok(parsed.parts.every((p) => p.intent && typeof p.intent.rawContext === "string"));
+  assert.ok(parsed.knownParts.every((p) => typeof p.description === "string" && p.description.length > 3));
+  assert.ok(parsed.knownParts.every((p) => p.intent && typeof p.intent.rawContext === "string"));
 });
 
 test("a structured equipment field is read, not rejected as malformed", async (t) => {
@@ -153,15 +153,16 @@ test("a structured equipment field is read, not rejected as malformed", async (t
   assert.match(parsed.equipment, /Royal 111/);
   assert.equal(typeof parsed.summary, "string");
   assert.match(parsed.summary, /vacuum breaker sleeve cracked/);
-  assert.equal(parsed.parts.length, 2);
+  assert.equal(parsed.knownParts.length, 2);
 });
 
 test("discover builds one Exa search query from the parsed faults, not from note prose", async (t) => {
-  const parsed = llmPartsPayload();
-  parsed.parts = parsed.parts.map((p, i) => ({ id: `part-${i + 1}`, ...p }));
+  // `payload` here is the raw model response, not a ParsedJob: it carries `parts`, not `knownParts`.
+  const payload = llmPartsPayload();
+  payload.parts = payload.parts.map((p, i) => ({ id: `part-${i + 1}`, ...p }));
 
   // Same mapping the pipeline uses: description, the equipment it sits on, and any cited number.
-  const incoming = parsed.parts.map((p) => ({ id: p.id, description: p.description, equipment: p.equipment, sku: p.sku }));
+  const incoming = payload.parts.map((p) => ({ id: p.id, description: p.description, equipment: p.equipment, sku: p.sku }));
   const fixtures = [...new Set(incoming.map((p) => p.equipment).filter(Boolean))];
   const expectedQuery = `${fixtures.join(" and ")} repair parts for ${incoming.map((p) => p.description).join(", ")}`;
 
@@ -230,12 +231,12 @@ test("live LiveKit model decomposes the long note into Exa-ready faults", async 
   }));
   const parsed = await res.json();
   assert.equal(res.status, 200, parsed.error);
-  assert.ok(Array.isArray(parsed.parts) && parsed.parts.length >= 1, JSON.stringify(parsed));
-  assert.ok(parsed.parts.every((p) => p.description));
-  assert.ok(parsed.parts.some((p) => /diaphragm|vacuum|breaker|closet/i.test(`${p.description} ${p.equipment}`)));
-  assert.ok(parsed.parts.every((p) => !/marriott|guest-room corridor contact/i.test(`${p.description} ${p.equipment}`)), "descriptions stay product-only");
+  assert.ok(Array.isArray(parsed.knownParts) && parsed.knownParts.length >= 1, JSON.stringify(parsed));
+  assert.ok(parsed.knownParts.every((p) => p.description));
+  assert.ok(parsed.knownParts.some((p) => /diaphragm|vacuum|breaker|closet/i.test(`${p.description} ${p.equipment}`)));
+  assert.ok(parsed.knownParts.every((p) => !/marriott|guest-room corridor contact/i.test(`${p.description} ${p.equipment}`)), "descriptions stay product-only");
 
-  const incoming = parsed.parts.map((p) => ({ id: p.id, description: p.description, equipment: p.equipment, sku: p.sku }));
+  const incoming = payload.parts.map((p) => ({ id: p.id, description: p.description, equipment: p.equipment, sku: p.sku }));
   const fixtures = [...new Set(incoming.map((p) => p.equipment).filter(Boolean))];
   const exaQuery = `${fixtures.join(" and ") || incoming[0].description} repair parts for ${incoming.map((p) => p.description).join(", ")}`;
   console.log("\n--- live parse ---");
@@ -243,7 +244,7 @@ test("live LiveKit model decomposes the long note into Exa-ready faults", async 
   console.log("summary:", parsed.summary);
   console.log("equipment:", parsed.equipment);
   console.log("laborHours:", parsed.laborHours);
-  console.log("parts:", parsed.parts.map((p) => ({ id: p.id, kind: p.kind, description: p.description, equipment: p.equipment, sku: p.sku })));
+  console.log("parts:", parsed.knownParts.map((p) => ({ id: p.id, kind: p.kind, description: p.description, equipment: p.equipment, sku: p.sku })));
   console.log("questions:", parsed.questions);
   console.log("Exa identify query that discovery would send:\n ", exaQuery);
 });

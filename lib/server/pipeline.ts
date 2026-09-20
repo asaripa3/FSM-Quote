@@ -1,45 +1,79 @@
-import type { Discovery, JobSettings, PipelineStage, ResolvedPart } from "@/lib/job";
-import { describesSameWork, exactCandidate, groundedIdentifier, subjectCandidate } from "@/lib/intent";
+import type { Brief, Confirmation, Discovery, JobPart, JobSettings, ParsedJob, PipelineStage, ResolvedPart } from "@/lib/job";
+import { exactCandidate, groundedIdentifier, splitSupersededWork, subjectCandidate } from "@/lib/intent";
 import { parseInspection } from "./input";
 import { discoverParts } from "./discovery";
 import { searchProducts } from "./product-search";
 import { candidateFromRecord, creditHit, lookupPart, rememberPart } from "./registry";
 import { safeError } from "./providers";
+import { researchJob } from "./research";
 
 export type Emit = (event: string, payload: unknown) => void;
-export async function runQuotePipeline(input: {trade:string;note:string;settings:Pick<JobSettings,"region"|"supplierDomains"> & {preferredDomains?:string}}, signal: AbortSignal, emit: Emit) {
+export type PipelineInput = {
+  trade: string;
+  note: string;
+  settings: Pick<JobSettings,"region"|"supplierDomains"> & {preferredDomains?:string};
+  /** Present only on the second phase, once the technician has run the checks and decided. */
+  confirmed?: Confirmation;
+};
+
+/**
+ * Phase one. Understand the situation, then research it.
+ *
+ * Nothing is sourced or priced here. The technician has not decided yet, and a price on screen before
+ * a diagnosis is the behaviour this design exists to remove. The exception is a note that already
+ * contains the decision, which needs no research and no confirmation because the transcript is the
+ * confirmation.
+ */
+export async function runQuotePipeline(input: PipelineInput, signal: AbortSignal, emit: Emit) {
   const progress = (stage:PipelineStage,message:string,partId?:string)=>emit(stage,{stage,message,partId,at:new Date().toISOString()});
-  progress("understanding_input","Reading the technician's observations. Unknown part numbers stay unknown.");
+  if (input.confirmed) return sourceConfirmedRepair(input, input.confirmed, signal, emit, progress);
+
+  progress("understanding_input","Reading what the technician is seeing. Nothing is diagnosed here.");
   const job = await parseInspection(input.trade,input.note,signal);
   emit("job_parsed",job);
-  // A decision the technician announced comes first. "Replace the unit rather than repair the motor"
-  // means the motor is not a second thing to buy, and researching or pricing it would put the same
-  // repair on the estimate twice under two names.
-  const supersessions=[
-    ...job.parts.flatMap(p=>(p.intent?.supersedes??[]).map(s=>({...s,by:p.id}))),
-    // The model states the supersession on some runs and not others. Whole-unit replacement implies
-    // it regardless: if the technician is replacing the appliance, the component that failed inside
-    // it is not a second thing to buy, whether or not the extraction thought to say so.
-    ...job.parts.filter(p=>p.kind==="unit").flatMap(p=>{
-      const covers=[p.intent?.suspectedPart ?? "", ...(p.intent?.ruledOut ?? [])].filter(Boolean);
-      return covers.map(subject=>({subject,
-        reason:`Covered by replacing the ${p.intent?.subject||p.description} rather than repairing it.`,
-        by:p.id}));
-    }),
-  ];
-  const superseded: {partId:string;reason:string}[]=[];
-  const remaining=job.parts.filter(part=>{
-    const replaced=supersessions.find(s=>s.by!==part.id&&(describesSameWork(s.subject,part.description)||describesSameWork(s.subject,part.intent?.subject??"")));
-    if(!replaced) return true;
-    superseded.push({partId:part.id,reason:replaced.reason});
-    return false;
-  });
+
+  if (job.brief.needsResearch) {
+    const packet = await researchJob(job.brief, supplierList(input), signal, progress);
+    emit("research_complete", packet);
+    progress("awaiting_confirmation", packet.repairPaths.length
+      ? "Run the checks above, then tell the workspace what you found. Nothing is sourced until you do."
+      : "The retrieved documentation did not settle this. Add the equipment model or the fault code and try again.");
+    return;
+  }
+
+  // The note already decided. Price what it named, and say so.
+  progress("understanding_input", "The note already names what to order, so nothing needs researching first.");
+  await sourceParts(input, job, job.knownParts, signal, emit, progress);
+}
+
+/** Phase two: the technician ran the checks and said what they found. */
+async function sourceConfirmedRepair(input: PipelineInput, confirmed: Confirmation, signal: AbortSignal, emit: Emit, progress: (s:PipelineStage,m:string,p?:string)=>void) {
+  progress("understanding_input", `Confirmed on site: ${confirmed.component}. Sourcing it now.`);
+  const job = await parseInspection(input.trade, `${input.note}\n\nThe technician has since confirmed: ${confirmed.component} needs replacing. ${confirmed.findings}`, signal);
+  emit("job_parsed", job);
+  // The confirmed component is the subject whatever the re-parse made of it; the technician decided.
+  const named = job.knownParts.length ? job.knownParts : [confirmedPart(confirmed, job.brief)];
+  await sourceParts(input, job, named, signal, emit, progress);
+}
+
+function confirmedPart(confirmed: Confirmation, brief: Brief): JobPart {
+  return { id: "part-1", description: confirmed.component, quantity: 1, sku: "", equipment: brief.equipment, kind: "part",
+    intent: { rawContext: confirmed.findings, manufacturer: brief.manufacturer, fixture: brief.equipment,
+      suspectedPart: confirmed.component, subject: confirmed.component, ruledOut: [], supersedes: [],
+      exactModel: "", route: "ambiguous", constraints: [] } };
+}
+
+const supplierList = (input: PipelineInput) =>
+  String(input.settings.preferredDomains ?? "").split(/[\s,]+/).map(d => d.toLowerCase()).filter(Boolean);
+
+async function sourceParts(input: PipelineInput, job: ParsedJob, incoming: JobPart[], signal: AbortSignal, emit: Emit, progress: (s:PipelineStage,m:string,p?:string)=>void) {
+  const { remaining, superseded } = splitSupersededWork(incoming);
   const exact=remaining.filter(p=>p.intent?.route==="exact");
   const direct: ResolvedPart[]=exact.map(exactCandidate);
   // A description already resolved for this equipment and symptom does not need researching again:
   // the registry answers it and the run goes straight to pricing. Stale or under-specified records
   // return nothing, so the part falls through to discovery as usual.
-  const ambiguous: typeof job.parts=[]; const fromRegistry: string[]=[]; const chosen: typeof job.parts=[]; const sourced: string[]=[];
+  const ambiguous: typeof job.knownParts=[]; const fromRegistry: string[]=[]; const chosen: typeof job.knownParts=[]; const sourced: string[]=[];
   for(const part of remaining.filter(p=>p.intent?.route!=="exact")){
     const record=await lookupPart(input.trade,part);
     if(record){ creditHit(record); direct.push(candidateFromRecord(record,part)); fromRegistry.push(part.id); continue; }
@@ -91,7 +125,7 @@ export async function runQuotePipeline(input: {trade:string;note:string;settings
   const candidatesPerFault=new Map<string,number>();
   for(const resolved of parts) for(const id of resolved.partIds) candidatesPerFault.set(id,(candidatesPerFault.get(id)??0)+1);
   for(const resolved of discovery.parts) for(const id of resolved.partIds){
-    const part=job.parts.find(p=>p.id===id);
+    const part=incoming.find(p=>p.id===id);
     if(part) rememberPart(input.trade,part,resolved,candidatesPerFault.get(id)===1);
   }
   emit("discovery_complete",discovery);

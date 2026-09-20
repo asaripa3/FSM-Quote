@@ -9,6 +9,11 @@ export async function POST(request: Request) {
   try {body=await request.json();}catch{return Response.json({error:"Invalid job request."},{status:400});}
   if(!body||!isTradeId(body.trade)||typeof body.note!=="string"||body.note.trim().length<12||body.note.length>12000)return Response.json({error:"Add a field note between 12 and 12,000 characters."},{status:400});
   const settings={region:typeof body.settings?.region==="string"?body.settings.region.slice(0,100):"United States",supplierDomains:typeof body.settings?.supplierDomains==="string"?body.settings.supplierDomains.slice(0,2000):"",preferredDomains:typeof body.settings?.preferredDomains==="string"?body.settings.preferredDomains.slice(0,2000):""};
+  // The technician's confirmation is client-supplied and therefore untrusted: clamped like the note,
+  // and it reaches a prompt only as quoted observation, never as instruction.
+  const raw=body.confirmed;
+  const component=typeof raw?.component==="string"?raw.component.trim().slice(0,200):"";
+  const confirmed=component?{component,findings:typeof raw?.findings==="string"?raw.findings.trim().slice(0,1000):""}:undefined;
   const abort=new AbortController();
   const signal=AbortSignal.any([request.signal,abort.signal,AbortSignal.timeout(285000)]);
   const encoder=new TextEncoder();
@@ -18,7 +23,7 @@ export async function POST(request: Request) {
     start(controller){
       const emit=(event:string,payload:unknown)=>{if(!closed)controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`));};
       heartbeat=setInterval(()=>{if(!closed)controller.enqueue(encoder.encode(": keepalive\n\n"));},15000);
-      void runQuotePipeline({trade:body.trade,note:body.note,settings},signal,emit)
+      void runQuotePipeline({trade:body.trade,note:body.note,settings,confirmed},signal,emit)
         .catch(error=>{if(!closed)emit("error",{error:safeError(error)});})
         .finally(()=>{clearInterval(heartbeat);if(!closed){closed=true;controller.close();}});
     },

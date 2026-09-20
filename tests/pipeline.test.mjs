@@ -17,14 +17,22 @@ function mockFetch(t,{ambiguous=false,failContents=false,parts=null,equipment='M
  const calls=[];const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
  globalThis.fetch=async(url,init)=>{
   const body=JSON.parse(init.body);calls.push({url:String(url),body});
-  if(String(url).includes('chat/completions'))return reply({choices:[{message:{content:JSON.stringify({summary:'Shower repair',equipment,laborHours:.75,parts:parts??[ambiguous?{...part,sku:'',intent:{...intent,exactModel:'',route:'ambiguous',confidence:.6,rawContext:'Older Moen single handle shower drips; cartridge model unknown.'}}:part],questions:[]})}}]});
+  if(String(url).includes('chat/completions'))return reply({choices:[{message:{content:JSON.stringify({summary:'Shower repair',equipment,laborHours:.75,brief:{equipment:'Moen single-handle shower',manufacturer:'Moen',model:'',serial:'',faultCodes:[],symptoms:['drips after shutoff'],alreadyChecked:[],stillUncertain:ambiguous?['cartridge model not identified']:[]},parts:parts??[ambiguous?{...part,sku:'',intent:{...intent,exactModel:'',route:'ambiguous',confidence:.6,rawContext:'Older Moen single handle shower drips; cartridge model unknown.'}}:part],questions:[]})}}]});
+  if(String(url).endsWith('/search')&&body.outputSchema?.properties?.repairPaths)return reply({requestId:'research',resolvedSearchType:'neural',costDollars:{total:.007},
+    results:[{url:'https://www.moen.com/support/cartridge-identification',title:'Moen cartridge identification',highlights:['Posi-Temp valves built after 1993 use the 1222 cartridge. Confirm the valve body stamp before ordering.']},
+             {url:'https://www.youtube.com/watch?v=abc',title:'Replacing a seized Moen cartridge',highlights:['Pull the retaining clip before the puller goes on, or the brass will gall.']}],
+    output:{content:{evidenceSummary:'Moen documentation ties a dripping single-handle Posi-Temp valve to a seized cartridge, and says to identify the valve body before ordering.',
+      checkBeforeReplacing:['Read the valve body stamp','Check the retaining clip is intact'],
+      repairPaths:[{component:'Posi-Temp cartridge',rationale:'Documented cause of drip after shutoff.',confirmBy:'Valve body stamp reads Posi-Temp.',evidenceLevel:'oem'},
+                   {component:'No part required, seized retaining clip',rationale:'A galled clip presents the same symptom.',confirmBy:'Clip releases by hand.',evidenceLevel:'field_only'}]}},
+    grounding:[]});
   if(String(url).endsWith('/search')&&!body.category)return reply({requestId:'discover',results:[{url:'https://manufacturer.example/cartridge',text:'Moen 1222 cartridge is a Posi-Temp replacement cartridge.',title:'Moen cartridge guide'}],output:{content:{parts:[{name:'Moen 1222 cartridge',manufacturer:'Moen',partNumber:'1222',sku:'',coversFaults:['part-1'],reason:'Candidate only. Check the valve family.',evidence:'Moen 1222 cartridge is a Posi-Temp replacement cartridge.',conflicts:[],questions:['Is this a Posi-Temp valve?']}]},grounding:[{field:'parts[0].name',confidence:'high',citations:[{url:'https://manufacturer.example/cartridge'}]}]},costDollars:{total:.01}});
   if(String(url).endsWith('/search'))return reply({requestId:'product',results:[{url:supplier,title:'Moen 1222 cartridge'}],costDollars:{total:.005}});
   if(String(url).endsWith('/contents')){if(failContents)return reply({results:[],statuses:[{id:supplier,status:'error'}]});return reply({requestId:'contents',results:[{url:supplier,text,summary:JSON.stringify(summary)}],statuses:[{id:supplier,status:'success',source:'live'}],costDollars:{total:.005}});}
   throw Error('Unexpected provider '+url);
  };return calls;
 }
-async function run(rawNote=note){const events=[];const response=await POST(new Request('http://localhost/api/quote-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trade:'plumbing',note:rawNote,settings:{region:'United States',supplierDomains:''}})}));assert.equal(response.status,200);await readEventStream(response,(event,data)=>events.push({event,data}));return events;}
+async function run(rawNote=note,confirmed){const events=[];const response=await POST(new Request('http://localhost/api/quote-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({trade:'plumbing',note:rawNote,confirmed,settings:{region:'United States',supplierDomains:''}})}));assert.equal(response.status,200);await readEventStream(response,(event,data)=>events.push({event,data}));return events;}
 
 test('router needs a stated exact replacement number, not just confident model output',()=>{
  assert.equal(normalizeIntent(intent,note,part).route,'exact');
@@ -47,14 +55,50 @@ test('exact path streams real product retrieval and Exa extraction without disco
  for(const stage of ['understanding_input','searching_products','validating_results','comparing_suppliers','complete'])assert.ok(events.some(e=>e.event===stage));
  assert.ok(!events.some(e=>e.event==='resolving_part'));
 });
-test('ambiguous path preserves uncertainty for Exa discovery then searches concrete candidates',async t=>{
+test('an uncertain note is researched and then stops, with nothing sourced or priced',async t=>{
  const calls=mockFetch(t,{ambiguous:true}),events=await run('Older Moen single handle shower drips; cartridge model unknown.');
  const searches=calls.filter(c=>c.url.endsWith('/search'));
- assert.equal(searches.length,2);assert.equal(searches[0].body.type,'deep-lite');assert.equal(searches[0].body.category,undefined);
- assert.match(searches[0].body.query,/model unknown/);assert.equal(searches[1].body.category,'product');
- const candidate=events.find(e=>e.event==='discovery_complete').data.parts[0];
- assert.equal(candidate.route,'ambiguous');assert.equal(candidate.confidence,'high');assert.ok(candidate.questions.length);
+
+ // One broad research search. Highlights, not full page text: a citation needs the excerpt shown,
+ // whereas pricing needs the whole page because the amount has to be located in it independently.
+ assert.equal(searches.length,1);
+ assert.ok(searches[0].body.contents.highlights.query);
+ assert.equal(searches[0].body.contents.text,undefined);
+ assert.equal(searches[0].body.category,undefined);
+
+ // Nothing is sourced and nothing is priced before the technician has decided.
+ assert.equal(calls.filter(c=>c.url.endsWith('/contents')).length,0);
+ assert.ok(!events.some(e=>e.event==='supplier_results'));
+ assert.ok(!events.some(e=>e.event==='discovery_complete'));
+
+ const packet=events.find(e=>e.event==='research_complete').data;
+ assert.match(packet.evidenceSummary,/Posi-Temp/);
+ assert.equal(packet.checkBeforeReplacing.length,2);
+ // A path that needs no part at all is a real answer, and the schema has to be able to say so.
+ assert.ok(packet.repairPaths.some(p=>/no part required/i.test(p.component)));
+ assert.deepEqual(packet.repairPaths.map(p=>p.evidenceLevel),['oem','field_only']);
+ // Both are classified rather than listed raw, and the manufacturer's own page leads.
+ assert.equal(packet.sources[0].kind,'oem');
+ assert.equal(packet.sources.find(s=>s.domain==='youtube.com').kind,'practitioner');
+ // This note names no plate designation, so even Moen's own page can only be tied to the maker.
+ // Authority needs the manufacturer AND the machine, so it is corroboration and says so.
+ assert.equal(packet.sources[0].match,'manufacturer');
+ assert.equal(packet.sources[0].strength,'corroborating');
+ assert.ok(events.some(e=>e.event==='awaiting_confirmation'));
 });
+
+test('the technician confirming the repair is what starts sourcing',async t=>{
+ const calls=mockFetch(t),events=await run('Older Moen single handle shower drips; cartridge model unknown.',
+   {component:'Moen 1222 cartridge',findings:'Valve body stamp reads Posi-Temp. Cartridge is seized.'});
+
+ // No research on this phase: the question it answers has been answered on site.
+ assert.equal(calls.filter(c=>c.url.endsWith('/search')&&c.body.outputSchema?.properties?.repairPaths).length,0);
+ // The confirmed component reaches the product search, and the page is read to verify its price.
+ assert.ok(calls.some(c=>c.url.endsWith('/search')&&c.body.category==='product'));
+ assert.ok(calls.some(c=>c.url.endsWith('/contents')));
+ assert.equal(events.find(e=>e.event==='supplier_results').data.sources[0].price,41.98);
+});
+
 test('partial crawl failures finish the stream with unknown prices, not invented fallback values',async t=>{
  mockFetch(t,{failContents:true});const events=await run();
  const source=events.find(e=>e.event==='supplier_results').data.sources[0];
@@ -138,7 +182,7 @@ test('a requirement survives the model rewording its units', async () => {
 
 test('the counts stated in the note open the cart, and a kit covering two faults stays one kit', async () => {
   const { statedQuantities } = await import('../lib/job.ts');
-  const job = {summary:'',equipment:'',laborHours:1,parts:[
+  const job = {summary:'',equipment:'',laborHours:1,knownParts:[
     {id:'part-1',description:'cartridge',query:'',quantity:4,sku:'',equipment:''},
     {id:'part-2',description:'escutcheon',query:'',quantity:1,sku:'',equipment:''},
     {id:'part-3',description:'trim screws',query:'',quantity:2,sku:'',equipment:''}],questions:[]};
@@ -191,7 +235,7 @@ test('a remembered part cannot answer for a different replacement number', async
 
 test('work the estimate does not cover is recorded rather than blocking the print', async () => {
   const { uncoveredWork } = await import('../lib/job.ts');
-  const job = {summary:'',equipment:'',laborHours:1,questions:[],parts:[
+  const job = {summary:'',equipment:'',laborHours:1,questions:[],knownParts:[
     {id:'part-1',description:'shower cartridge',query:'',quantity:1,sku:'',equipment:''},
     {id:'part-2',description:'escutcheon plate',query:'',quantity:1,sku:'',equipment:''},
     {id:'part-3',description:'mixing valve body',query:'',quantity:1,sku:'',equipment:''}]};
@@ -208,7 +252,7 @@ test('work the estimate does not cover is recorded rather than blocking the prin
   // Choosing one of two candidates for a fault covers that fault; the runner-up is not an omission.
   assert.equal(uncoveredWork(job, discovery, id => id === 'r1' || id === 'r3').length, 1);
   // A fully covered job records nothing.
-  assert.equal(uncoveredWork({...job, parts: job.parts.slice(0,1)}, discovery, () => true).length, 0);
+  assert.equal(uncoveredWork({...job, knownParts: job.knownParts.slice(0,1)}, discovery, () => true).length, 0);
   assert.deepEqual(uncoveredWork(null, discovery, () => true), []);
 });
 

@@ -6,8 +6,39 @@ export type JobSettings = { company: string; laborRate: number; markupPercent: n
  */
 export type PurchaseKind = "part" | "unit" | "tool";
 export type JobPart = { id: string; description: string; quantity: number; sku: string; equipment: string; kind?: PurchaseKind; intent?: PartIntent };
+/**
+ * What the technician is looking at, and what they do not yet know.
+ *
+ * The note no longer has to contain a repair decision. It can stop at an observation and an
+ * uncertainty, which is the ordinary case: the equipment is unfamiliar and the answer is on the open
+ * web rather than in the company's own systems.
+ */
+export type Brief = {
+  equipment: string;
+  manufacturer: string;
+  model: string;            // the designation on the plate, when the note gives one
+  serial: string;
+  faultCodes: string[];
+  symptoms: string[];
+  alreadyChecked: string[];
+  stillUncertain: string[];
+  /** Whether anything needs researching before a part can be named. Decided locally, costs nothing. */
+  needsResearch: boolean;
+};
+
 /** laborHours is the midpoint used for arithmetic; laborRange is what the technician actually said. */
-export type ParsedJob = { summary: string; equipment: string; laborHours: number | null; laborRange?: { min: number; max: number } | null; parts: JobPart[]; questions: string[]; rawNote?: string };
+export type ParsedJob = { summary: string; equipment: string; laborHours: number | null; laborRange?: { min: number; max: number } | null; brief: Brief; knownParts: JobPart[]; questions: string[]; rawNote?: string };
+
+/** How close a retrieved source comes to the machine in front of the technician. */
+export type ModelMatch = "exact" | "family" | "manufacturer" | "none";
+export type SourceKind = "oem" | "distributor" | "practitioner" | "forum" | "unknown";
+export type EvidenceStrength = "authoritative" | "corroborating" | "anecdotal";
+export type ResearchSource = { url: string; title: string; domain: string; highlight: string; kind: SourceKind; strength: EvidenceStrength; match: ModelMatch };
+/** A component the documentation associates with this failure. Not a diagnosis, and not a purchase. */
+export type RepairPath = { component: string; rationale: string; confirmBy: string; evidenceLevel: "oem" | "corroborated" | "field_only" };
+export type ResearchPacket = { question: string; evidenceSummary: string; checkBeforeReplacing: string[]; repairPaths: RepairPath[]; sources: ResearchSource[]; pagesRead: number; trace: ExaTrace[] };
+/** What the technician found when they ran the checks. The gate everything downstream waits on. */
+export type Confirmation = { component: string; findings: string };
 export type SourceOption = { title: string; supplier: string; url: string; domain: string; price: number | null; currency: string; priceEvidence: string; sku: string; availability: string; image: string; retrievedAt: string; priceStatus?: "page-extracted" | "cached-page" | "needs-review"; currencyAssumed?: boolean; packQuantity?: number | null; packEvidence?: string; identityEvidence?: string; contentHash?: string; matchStatus?: "exact" | "needs-review" | "rejected"; conflicts?: string[]; missingChecks?: string[]; rankReason?: string; availabilityEvidence?: string };
 /** What Exa + the model concluded actually fixes the fault, before any price is looked up. */
 export type ResolvedPart = {
@@ -59,7 +90,7 @@ export const openingPrice = (source: SourceOption) => source.price ?? 0;
  */
 export function statedQuantities(discovery: Discovery, job: ParsedJob | null): Record<string, number> {
   if (!job) return {};
-  return Object.fromEntries(discovery.parts.map(r => [r.id, Math.max(1, ...r.partIds.map(id => job.parts.find(p => p.id === id)?.quantity ?? 1))]));
+  return Object.fromEntries(discovery.parts.map(r => [r.id, Math.max(1, ...r.partIds.map(id => job.knownParts.find(p => p.id === id)?.quantity ?? 1))]));
 }
 
 export type Constraint = { field: string; value: string };
@@ -88,7 +119,7 @@ export type PartIntent = {
 };
 /** How many reported items went to each of the pipeline's four destinations. */
 export type Routes = { exact: number; registry: number; sourced: number; tools: number; ambiguous: number; superseded: number };
-export type PipelineStage = "understanding_input" | "resolving_part" | "searching_products" | "validating_results" | "comparing_suppliers" | "complete";
+export type PipelineStage = "understanding_input" | "retrieving_knowledge" | "reading_documentation" | "awaiting_confirmation" | "resolving_part" | "searching_products" | "validating_results" | "comparing_suppliers" | "complete";
 export type PipelineProgress = { stage: PipelineStage; message: string; partId?: string; query?: string; at: string };
 export type ProductSearchResult = { query: string; sources: SourceOption[]; trace: ExaTrace[] };
 
@@ -104,7 +135,7 @@ export type ProductSearchResult = { query: string; sources: SourceOption[]; trac
 export function uncoveredWork(job: ParsedJob | null, discovery: Discovery | null, isPicked: (candidateId: string) => boolean) {
   if (!job) return [];
   const covered = new Set((discovery?.parts ?? []).filter(r => isPicked(r.id)).flatMap(r => r.partIds));
-  return job.parts.filter(p => !covered.has(p.id)).map(p => ({
+  return job.knownParts.filter(p => !covered.has(p.id)).map(p => ({
     label: p.description,
     reason: discovery?.superseded?.find(s => s.partId === p.id)?.reason
       ?? discovery?.unresolved.find(u => u.partId === p.id)?.reason
