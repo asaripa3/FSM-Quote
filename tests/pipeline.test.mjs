@@ -59,11 +59,14 @@ test('an uncertain note is researched and then stops, with nothing sourced or pr
  const calls=mockFetch(t,{ambiguous:true}),events=await run('Older Moen single handle shower drips; cartridge model unknown.');
  const searches=calls.filter(c=>c.url.endsWith('/search'));
 
- // One broad research search. Highlights, not full page text: a citation needs the excerpt shown,
- // whereas pricing needs the whole page because the amount has to be located in it independently.
+ // One broad research search, asking for both views of each page. The highlight is what the
+ // technician reads; the whole document is what a claim is checked against, because the extraction
+ // reasons over everything Exa retrieved. Measured on the Carrier fault code: verifying against the
+ // 1800-character excerpt anchored none of the paths generated, verifying against the text anchored
+ // all of them, and the two calls cost $0.0070 either way.
  assert.equal(searches.length,1);
  assert.ok(searches[0].body.contents.highlights.query);
- assert.equal(searches[0].body.contents.text,undefined);
+ assert.equal(searches[0].body.contents.text,true);
  assert.equal(searches[0].body.category,undefined);
 
  // Nothing is sourced and nothing is priced before the technician has decided.

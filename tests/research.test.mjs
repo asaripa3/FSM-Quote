@@ -83,3 +83,36 @@ test('a manufacturer search portal is not documentation', async () => {
   assert.equal(looksLikeNavigation('Five flashes indicates an ignition lockout fault.'), false);
   assert.equal(looksLikeNavigation('48TC service manual'), true);
 });
+
+test('a claim is checked against the whole document, not the excerpt shown beside it', async () => {
+  const { researchJob } = await import('../lib/server/research.ts');
+  process.env.EXA_API_KEY='test-exa';
+  const original = globalThis.fetch;
+  // A real sentence from a service manual, sitting well past the excerpt the search returned. Checked
+  // against the highlight it is indistinguishable from an invented quote, and the path is withheld for
+  // being correct about a part of the page we chose not to keep.
+  const deep = 'The IGC control reports a pressure switch fault when the inducer fails to prove negative pressure within thirty seconds of start.';
+  const page = `${'Carrier 48TC single package rooftop units, service and troubleshooting. '.repeat(400)}${deep}`;
+  const reply = withText => async () => Response.json({
+    results: [{ url: 'https://www.carrier.com/48tc-service.pdf', title: 'Carrier 48TC service manual',
+      highlights: ['Carrier 48TC single package rooftop units, service and troubleshooting information for the installer.'],
+      ...(withText ? { text: page } : {}) }],
+    output: { content: { evidenceSummary: 'x', contradicts: '', contradictsSupport: '', checkBeforeReplacing: [],
+      repairPaths: [{ component: 'Pressure switch', rationale: 'Documented cause.', confirmBy: 'Meter across the switch.', support: deep }] } },
+  });
+  const brief = { equipment:'rooftop unit', manufacturer:'Carrier', model:'48TCED08A2A6', serial:'', faultCodes:['31'],
+    symptoms:['not cooling'], alreadyChecked:[], stillUncertain:['cause unknown'], constraints:[], needsResearch:true };
+  try {
+    globalThis.fetch = reply(false);
+    assert.equal((await researchJob(brief, [])).repairPaths.length, 0);
+    globalThis.fetch = reply(true);
+    const packet = await researchJob(brief, []);
+    assert.equal(packet.repairPaths.length, 1);
+    assert.equal(packet.repairPaths[0].evidenceLevel, 'oem');
+    // The document is verified against; the excerpt is still what gets shown.
+    assert.match(packet.sources[0].highlight, /service and troubleshooting information for the installer/);
+    assert.ok(!packet.sources[0].highlight.includes(deep));
+    // And nothing that large is ever sent to the client.
+    assert.ok(JSON.stringify(packet).length < 4000);
+  } finally { globalThis.fetch = original; }
+});

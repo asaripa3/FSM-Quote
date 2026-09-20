@@ -9,10 +9,13 @@ import type { Brief, ExaTrace, PipelineStage, RepairPath, ResearchPacket, Resear
  * One broad search, and a second only when a whole class of source came back missing. The routing
  * decision that keeps the call count low happens locally, before Exa, rather than by rationing Exa.
  *
- * Highlights rather than full page text, which is the opposite of the procurement path. Pricing needs
- * the whole page because the amount has to be located in it independently; a citation only needs the
- * excerpt shown on screen. Measured at $0.0070 for ten results with highlights and the structured
- * output in the same call.
+ * Highlights AND full page text, for two different jobs. The highlight is what a technician reads on
+ * screen. The text is what a claim is checked against, and it has to be the whole document: the
+ * extraction reasons over everything Exa retrieved, so verifying its quotes against an 1800-character
+ * excerpt rejects real sentences for the crime of falling outside the part we kept. Measured on the
+ * Carrier fault code: highlights alone anchored none of the paths generated, while the same call with
+ * text anchored all of them, at $0.0070 either way. The text is never stored and never sent to the
+ * client; it exists for the length of the call.
  */
 const RULES = `You report what retrieved documentation says about a reported fault. You do NOT diagnose, and you do not decide what to replace.
 evidenceSummary states what the documentation says the reported code or symptom means, in two or three sentences. Say what the sources say, never what you conclude. If the sources disagree, say so.
@@ -74,8 +77,13 @@ function fieldQuery(brief: Brief) {
  */
 const PER_HOST = 3;
 
-function collect(results: unknown[], brief: Brief, suppliers: string[], seen: Set<string>, perHost = new Map<string, number>()): ResearchSource[] {
-  const out: ResearchSource[] = [];
+/** A retrieved page: the row shown to the technician, and the document a claim is checked against. */
+type Retrieved = { source: ResearchSource; text: string };
+/** Enough of a document to hold the sentence a claim quotes, capped so one huge page cannot exhaust memory. */
+const PAGE = 400000;
+
+function collect(results: unknown[], brief: Brief, suppliers: string[], seen: Set<string>, perHost = new Map<string, number>()): Retrieved[] {
+  const out: Retrieved[] = [];
   for (const raw of results) {
     const item = raw as Record<string, unknown>;
     try {
@@ -92,10 +100,13 @@ function collect(results: unknown[], brief: Brief, suppliers: string[], seen: Se
       // documentation. Citing its menu under "official documentation" is worse than citing nothing.
       if (looksLikeNavigation(highlight)) continue;
       // Judged on what came back, not on the URL: a page whose excerpt never names the machine is
-      // demoted however official its host looks.
+      // demoted however official its host looks. Deliberately the excerpt and not the whole document:
+      // an aggregator's index lists every model its site carries, so a full-text match would call it
+      // an exact match for any machine. The relevance label describes what the technician will read.
       const match = modelMatch(`${title} ${highlight}`, brief);
       const kind = sourceKind(url.href, title, brief.manufacturer, suppliers);
-      out.push({ url: url.href, title, domain: url.hostname.replace(/^www\./, ""), highlight, kind, match, strength: evidenceStrength(kind, match) });
+      out.push({ source: { url: url.href, title, domain: url.hostname.replace(/^www\./, ""), highlight, kind, match, strength: evidenceStrength(kind, match) },
+        text: typeof item.text === "string" ? item.text.slice(0, PAGE) : "" });
     } catch { /* Unusable result. */ }
   }
   return out;
@@ -118,29 +129,29 @@ export async function researchJob(
   let started = Date.now();
   const first = await exaSearch({
     query: searchQuery(brief), type: "auto", numResults: 10,
-    contents: { highlights: { query: question, maxCharacters: 1800 } },
+    contents: { highlights: { query: question, maxCharacters: 1800 }, text: true },
     systemPrompt: RULES, outputSchema: SCHEMA,
   }, signal);
   trace.push({ step: "Research the equipment", endpoint: "POST /search", query: searchQuery(brief),
     searchType: String(first.resolvedSearchType || "auto"), results: (first.results ?? []).length,
     costDollars: first.costDollars?.total ?? null, ms: Date.now() - started, requestId: first.requestId });
 
-  const sources = collect(first.results ?? [], brief, suppliers, seen, perHost);
+  const retrieved = collect(first.results ?? [], brief, suppliers, seen, perHost);
 
   // Only when a whole class is absent, never routinely.
   let fieldSourcesUnavailable = false;
-  if (missingPractitioner(sources.map(s => s.kind))) {
+  if (missingPractitioner(retrieved.map(r => r.source.kind))) {
     progress?.("reading_documentation", "Documentation found, but no technician account of this failure. Searching field sources.");
     started = Date.now();
     try {
       const second = await exaSearch({
         query: fieldQuery(brief), type: "auto", numResults: 6,
-        contents: { highlights: { query: question, maxCharacters: 1200 } },
+        contents: { highlights: { query: question, maxCharacters: 1200 }, text: true },
       }, signal);
       trace.push({ step: "Find field knowledge", endpoint: "POST /search", query: fieldQuery(brief),
         searchType: String(second.resolvedSearchType || "auto"), results: (second.results ?? []).length,
         costDollars: second.costDollars?.total ?? null, ms: Date.now() - started, requestId: second.requestId });
-      sources.push(...collect(second.results ?? [], brief, suppliers, seen, perHost));
+      retrieved.push(...collect(second.results ?? [], brief, suppliers, seen, perHost));
     } catch {
       if (signal?.aborted) signal.throwIfAborted();
       // The documentation packet stands on its own. Say the top-up failed rather than leaving the
@@ -166,7 +177,7 @@ export async function researchJob(
    * a machine no page was read for. Measured with two manufacturer pages whose retrieved excerpts were
    * both site navigation: zero sources kept, and a two-sentence summary and two checks still shown.
    */
-  if (!sources.length) {
+  if (!retrieved.length) {
     return { question, evidenceSummary: "", documentationUnavailable: true, fieldSourcesUnavailable,
       contradicts: "", contradictsSupport: "", contradictsSourceUrls: [], checkBeforeReplacing: [],
       repairPaths: [], sources: [], pagesRead: 0, trace };
@@ -182,11 +193,15 @@ export async function researchJob(
    */
   const backing = (support: string) => {
     if (support.length < 25) return [];
-    return sources
-      .map(source => ({ source, score: evidenceGrounding(support, `${source.title} ${source.highlight}`) }))
-      .filter(({ source }) => evidenceAnchored(support, `${source.title} ${source.highlight}`))
+    // Checked against the whole document, which is what the extraction read. Checked against the
+    // highlight instead, a quote taken from page four of a service manual is indistinguishable from
+    // an invented one, and the path is withheld for being correct about the wrong part of the page.
+    return retrieved
+      .map(r => ({ r, page: `${r.source.title} ${r.text || r.source.highlight}` }))
+      .map(({ r, page }) => ({ r, score: evidenceGrounding(support, page), anchored: evidenceAnchored(support, page) }))
+      .filter(({ anchored }) => anchored)
       .sort((a, b) => b.score - a.score)
-      .map(({ source }) => source);
+      .map(({ r }) => r.source);
   };
   const levelFrom = (found: ResearchSource[]): RepairPath["evidenceLevel"] =>
     found.some(s => s.kind === "oem") ? "oem"
@@ -224,8 +239,8 @@ export async function researchJob(
     contradictsSourceUrls: contradicts ? contradictsFound.slice(0, 3).map(s => s.url) : [],
     checkBeforeReplacing: list(output.checkBeforeReplacing, 8),
     repairPaths,
-    sources: sources.sort((a, b) => RANK[a.strength] - RANK[b.strength]),
-    pagesRead: sources.length,
+    sources: retrieved.map(r => r.source).sort((a, b) => RANK[a.strength] - RANK[b.strength]),
+    pagesRead: retrieved.length,
     trace,
   };
 }
