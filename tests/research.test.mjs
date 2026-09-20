@@ -59,3 +59,17 @@ test('a retrieval missing a whole source class asks for one narrow second search
   // Nothing retrieved means nothing to top up; the failure is upstream.
   assert.equal(missingPractitioner([]), false);
 });
+
+test('a manufacturer search portal is not documentation', async () => {
+  const { looksLikeNavigation } = await import('../lib/research.ts');
+  // Both "official" sources on a real Carrier run were document search portals: OEM domain, OEM
+  // ranking, and an excerpt made entirely of menus. Citing that as documentation is worse than
+  // citing nothing, because the label implies the technician can act on it.
+  assert.equal(looksLikeNavigation('Product Document Search | Carrier Commercial Systems North America Skip to main content We will help you find what you are looking for. Simply select the product type, the model number and the literature you want. Sign In to shop with real-time inventory. Add to cart. Checkout faster with saved delivery.'), true);
+  assert.equal(looksLikeNavigation('Documents | CE Search Account Lists Cart Create An Account Register to shop from our vast inventory of top brand name HVAC equipment, parts, and supplies. Sign in to get organized with lists. View cart and checkout.'), true);
+  // Real documentation survives, including a page that happens to mention one furniture phrase.
+  assert.equal(looksLikeNavigation('The Integrated Gas Unit Controller reports faults using an LED that flashes between one and nine times, with a three second pause between sequences. Five flashes indicates an ignition lockout fault after four unsuccessful attempts.'), false);
+  // A short, dense sentence is often the best evidence on the page, so length is only a floor.
+  assert.equal(looksLikeNavigation('Five flashes indicates an ignition lockout fault.'), false);
+  assert.equal(looksLikeNavigation('48TC service manual'), true);
+});

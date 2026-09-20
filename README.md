@@ -1,85 +1,33 @@
 # FSMpedia
 
-An Exa-powered parts-intelligence layer for field service. A technician's inspection note becomes verified replacement parts, live supplier prices, and a quote-ready estimate.
+The live knowledge layer for field technicians.
 
 **Live:** [fsm-quote.vercel.app](https://fsm-quote.vercel.app)
 
-![A successful Exa run](docs/exa-run.png)
+![Exa research on a Carrier rooftop unit](docs/exa-run.png)
 
-Above: three reported faults resolved into two orderable parts. The closet's worn diaphragm and cracked vacuum breaker sleeve collapse into a single Sloan A-1101-A kit, because the kit's own contents list (quoted from the page Exa retrieved) already includes the vacuum breaker repair kit. The second line item would have been a wasted order. The panel on the right shows every Exa call the run made.
+Above: the technician reported fault code 31. The retrieved documentation says this controller has no
+code 31, and what its real flash codes mean. Nothing is sourced or priced until that is settled.
 
-## Chosen market
+## Why
 
-Field Service Management and MRO parts procurement: plumbing, HVAC, electrical and similar maintenance trades.
+A technician stands in front of equipment their company has never seen. The manual, the fault code
+table, the wiring diagram and the right replacement part are all on the open web, spread across
+manufacturer portals, PDFs, distributor pages and forums. Finding them means leaving the job. You
+cannot pre-load every manufacturer, model, revision and service bulletin a multi-trade technician
+meets over a decade, so the knowledge base has to be assembled per job, live. That is what Exa is for.
 
-**Enterprise customer:** commercial field-service companies, multi-trade maintenance operators, facilities-service providers.
+## What it does
 
-**End user:** the field technician or service estimator, standing in front of equipment their own systems do not fully know. Today the open web is their unofficial knowledge base: manufacturer portals, PDFs, distributor pages, forums and video, navigated by hand, outside the job. FSMpedia turns that into a programmatic, evidence-backed step inside the work.
+Describe what you are seeing, by voice or text, including what you do not know. FSMpedia extracts the
+equipment, fault codes, symptoms and open questions, then runs one Exa search to build a knowledge
+packet for that job: OEM documentation, field knowledge, what the evidence says, and the checks to run
+before replacing anything. Sources are graded by where they came from and how closely they match the
+machine, so a manual covering the family is never presented as one naming your exact model. You run
+the checks and confirm what you found, and only then does it search for the part, the supplier and a
+public price. Your labour rate and markup finish the quote, and they never come from the web.
 
-## Where Exa is used
-
-The note is parsed into reported items first. Each item is then routed to one of four destinations, and the workspace shows which:
-
-- **Exact part request.** The note names the replacement number, so the item goes straight to pricing.
-- **Resolved before.** A conclusion this contractor's own technicians confirmed on an earlier job answers it, and it goes straight to pricing.
-- **Named tool.** The technician knows what they need, so Exa looks for a purchasable model rather than diagnosing a fault.
-- **Uncertain description.** Exa researches it against manufacturer and distributor pages first.
-
-Exa does the work at two of those steps:
-
-1. **Identify the part.** `POST /search` with `systemPrompt` and `outputSchema`. Exa reads manufacturer and distributor pages and returns the orderable part, its contents, and a quote proving the fit. This is where messy field language ("diaphragm looks worn, vacuum breaker sleeve cracked") becomes one part number.
-2. **Price the part.** `POST /search` with `category: "product"`, then `POST /contents` with a structured schema, returning current supplier listings, price evidence, SKU, pack size, availability and product images.
-
-Quote arithmetic is deterministic and never delegated to a model. The local model never names a product; it decides what to ask.
-
-## Why there is no knowledge base
-
-Conventional retrieval assumes you already own the corpus: collected, chunked, embedded and
-maintained. That assumption does not survive contact with field service. A multi-trade technician
-meets equipment their company has never seen, and you cannot pre-load every manufacturer, model,
-revision, service bulletin, wiring diagram, error-code table and superseded SKU they will encounter
-over a decade of work.
-
-So FSMpedia assembles the knowledge base per job, live, from the open web. The long tail is the
-product, and that is what Exa is for.
-
-What does persist is the contractor's own business context, which is a different thing entirely:
-
-| Live through Exa, never stored | The contractor's own, stored |
-|---|---|
-| OEM manuals and service bulletins | Labour rates and markup rules |
-| Wiring diagrams and error-code tables | Preferred vendors and inventory |
-| Technician videos and field discussions | Jobs their technicians already confirmed |
-| Distributor pages, supersessions, prices | Customer and site history |
-
-Nothing technical ships with the app. The resolved-part registry starts empty for every company and
-fills only with conclusions their own technicians confirmed, which is why it is business context
-rather than a corpus.
-
-## What is verified before you see it
-
-Nothing reaches the estimate on the model's word alone:
-
-- **Evidence must be on the page.** A candidate is kept only when a substantial run of its supporting quote appears word for word on a page Exa actually retrieved, and that same page carries the part number. A quote assembled from two pages fails both checks. Spec sheets arrive as PDF tables, so the match tolerates the spacing they introduce.
-- **The equipment must exist.** If the retrieved pages never mention the equipment the technician named, no part is resolved. The app asks for the equipment model or part number instead of substituting a similar product's kit.
-- **Prices must be corroborated.** A price appears only when the page identifies itself as the requested part, the amount is present in both the extraction's quote and the page text, and the currency is supported. Otherwise the row says what the page did show and why it was not accepted.
-- **Ambiguity is surfaced, not guessed.** Where variants differ only by flow rate or voltage and the note does not say which, the app asks rather than picking one.
-- **Requirements survive rewording.** A note reading "120 V" and a page reading "120 volts" are one requirement, and a requirement the page never states becomes a check on the row rather than disappearing.
-- **What is not covered is written down.** Reported work the estimate does not price is listed on the estimate with its reason, rather than being left off silently.
-
-Toggle **Exa** off in the workspace header to see the same job with every Exa contribution withheld: the technician's words, no part number, no supplier, no price.
-
-## Structure
-
-A single Next.js app. The Exa work runs in route handlers, which deploy as serverless functions, so there is no separate backend to run.
-
-- `app/api/quote-stream` runs the whole job and streams each stage back: note to faults, faults to parts with Exa, parts to priced supplier options.
-- `app/api/source` re-prices a single resolved part when you retry one candidate.
-- `app/api/transcribe` turns a recording or a microphone take into a note.
-- `app/api/parse` parses a note on its own. Nothing in the app calls it.
-- `lib/` holds the trade packs, quote maths, verification helpers, and server-only provider calls.
-
-## Run it
+## Setup
 
 ```bash
 cp .env.example .env.local
@@ -91,10 +39,8 @@ Fill in `EXA_API_KEY`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET`, then:
 npm install && npm run dev
 ```
 
-Keys are read from the environment server-side and never reach the browser.
+Keys are read server-side and never reach the browser. `npm test` runs the suite.
 
-## Deploy
-
-Deploys to Vercel with no configuration. Import the repository, then set `EXA_API_KEY`, `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in the project's environment variables. `FIELDQUOTE_MODEL` is optional and selects the note-parsing model.
-
-The API routes have no authentication or rate limiting. They call paid services, so put deployment protection in front of them before sharing a URL.
+Deploys to Vercel with no configuration. Set the same three variables in the project. The API routes
+have no authentication or rate limiting and call paid services, so put deployment protection in front
+of them before sharing a URL.

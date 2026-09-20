@@ -1,5 +1,5 @@
 import { exaSearch } from "@/lib/server/providers";
-import { evidenceStrength, missingPractitioner, modelMatch, sourceKind } from "@/lib/research";
+import { evidenceStrength, looksLikeNavigation, missingPractitioner, modelMatch, sourceKind } from "@/lib/research";
 import type { Brief, ExaTrace, PipelineStage, RepairPath, ResearchPacket, ResearchSource } from "@/lib/job";
 
 /**
@@ -67,6 +67,9 @@ function collect(results: unknown[], brief: Brief, suppliers: string[], seen: Se
       seen.add(url.href);
       const title = text(item.title, 200) || url.hostname.replace(/^www\./, "");
       const highlight = (Array.isArray(item.highlights) ? item.highlights.map(h => text(h, 1200)) : []).filter(Boolean).join(" … ").slice(0, 1800);
+      // A document search portal on the manufacturer's own domain is an OEM page carrying no
+      // documentation. Citing its menu under "official documentation" is worse than citing nothing.
+      if (looksLikeNavigation(highlight)) continue;
       // Judged on what came back, not on the URL: a page whose excerpt never names the machine is
       // demoted however official its host looks.
       const match = modelMatch(`${title} ${highlight}`, brief);

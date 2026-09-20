@@ -103,3 +103,22 @@ export function evidenceStrength(kind: SourceKind, match: ModelMatch): EvidenceS
 export function missingPractitioner(kinds: SourceKind[]) {
   return kinds.length > 0 && !kinds.includes("practitioner") && kinds.some(k => k === "oem" || k === "unknown");
 }
+
+const CHROME = /\b(?:skip to main content|sign in|log in|create an account|my account|add to cart|view cart|checkout|newsletter|cookie|privacy policy|all rights reserved|search by model number|select a product type)\b/gi;
+/**
+ * Whether the retrieved excerpt is the page's furniture rather than its content.
+ *
+ * A manufacturer's document *search* portal ranks as an OEM page and contains no documentation at
+ * all: its text is menus, sign-in prompts and a cart. Presenting that under "official documentation"
+ * is worse than presenting nothing, because the label implies the technician can act on it.
+ */
+export function looksLikeNavigation(highlight: string) {
+  const text = highlight.trim();
+  // Length is deliberately not the test beyond a floor. "Five flashes indicates an ignition lockout
+  // fault" is forty-eight characters and is the best evidence on the page; a nav page is identified
+  // by what it is made of, not by how much of it there is.
+  if (text.length < 40) return true;
+  const chrome = (text.match(CHROME) ?? []).length;
+  // Two or more distinct furniture phrases, or a sixth of the excerpt spent on them, is a nav page.
+  return chrome >= 2 || chrome * 120 > text.length;
+}

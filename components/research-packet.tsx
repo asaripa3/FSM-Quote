@@ -68,7 +68,6 @@ export function EpistemicState({ packet, confirmed, busy }: { packet: ResearchPa
         ? "The documentation does not support the reported fault"
         : `${packet.repairPaths.length} evidence-backed repair ${packet.repairPaths.length === 1 ? "path" : "paths"}`}</strong>
       <ul>
-        {contradicted && <li>{packet.contradicts}</li>}
         {contradicted && packet.repairPaths.length > 0 && <li>{packet.repairPaths.length} paths listed for the symptom, not the reported code</li>}
         {unsupported && !contradicted && <li>No component is named until the fault is identified correctly</li>}
         {documented > 0 && <li>{documented} OEM {documented === 1 ? "document" : "documents"} retrieved</li>}
