@@ -22,6 +22,8 @@ export type Brief = {
   symptoms: string[];
   alreadyChecked: string[];
   stillUncertain: string[];
+  /** Requirements the note states for the job itself, such as a 120 V coil. Grounded in the note. */
+  constraints: Constraint[];
   /** Whether anything needs researching before a part can be named. Decided locally, costs nothing. */
   needsResearch: boolean;
 };
@@ -34,15 +36,33 @@ export type ModelMatch = "exact" | "family" | "manufacturer" | "none";
 export type SourceKind = "oem" | "distributor" | "practitioner" | "forum" | "unknown";
 export type EvidenceStrength = "authoritative" | "corroborating" | "anecdotal";
 export type ResearchSource = { url: string; title: string; domain: string; highlight: string; kind: SourceKind; strength: EvidenceStrength; match: ModelMatch };
-/** A component the documentation associates with this failure. Not a diagnosis, and not a purchase. */
-export type RepairPath = { component: string; rationale: string; confirmBy: string; evidenceLevel: "oem" | "corroborated" | "field_only" };
+/**
+ * A component the documentation associates with this failure. Not a diagnosis, and not a purchase.
+ *
+ * `support` is the verbatim excerpt from a retained source that backs it, and `sourceUrls` are the
+ * sources that excerpt was found on. A path that cannot produce either is withheld: the evidence
+ * level is derived from those sources, never taken from the model's own label.
+ */
+export type RepairPath = { component: string; rationale: string; confirmBy: string;
+  evidenceLevel: "oem" | "corroborated" | "field_only"; support: string; sourceUrls: string[] };
 export type ResearchPacket = { question: string; evidenceSummary: string;
   /** The practitioner top-up was attempted and did not return. The OEM packet still stands. */
   fieldSourcesUnavailable?: boolean;
   /** What the documentation does not support about the report itself, such as a code this unit lacks. */
-  contradicts: string; checkBeforeReplacing: string[]; repairPaths: RepairPath[]; sources: ResearchSource[]; pagesRead: number; trace: ExaTrace[] };
+  contradicts: string;
+  /** The verbatim excerpt backing the contradiction, and where it was found. Both or neither. */
+  contradictsSupport: string;
+  contradictsSourceUrls: string[]; checkBeforeReplacing: string[]; repairPaths: RepairPath[]; sources: ResearchSource[]; pagesRead: number; trace: ExaTrace[] };
 /** What the technician found when they ran the checks. The gate everything downstream waits on. */
-export type Confirmation = { component: string; findings: string; equipment?: string; manufacturer?: string };
+/**
+ * What the technician established on site, carried whole into sourcing.
+ *
+ * The model and the stated requirements travel with it because the sourcing phase makes no model
+ * call: without them a model-specific research phase would hand procurement a generic buying
+ * question, which is how a 120 V requirement and a 48TCED08A2A6 plate get lost between the two.
+ */
+export type Confirmation = { component: string; findings: string; equipment?: string;
+  manufacturer?: string; model?: string; constraints?: Constraint[]; quantity?: number };
 export type SourceOption = { title: string; supplier: string; url: string; domain: string; price: number | null; currency: string; priceEvidence: string; sku: string; availability: string; image: string; retrievedAt: string; priceStatus?: "page-extracted" | "cached-page" | "needs-review"; currencyAssumed?: boolean; packQuantity?: number | null; packEvidence?: string; identityEvidence?: string; contentHash?: string; matchStatus?: "exact" | "needs-review" | "rejected"; conflicts?: string[]; missingChecks?: string[]; rankReason?: string; availabilityEvidence?: string };
 /** What Exa + the model concluded actually fixes the fault, before any price is looked up. */
 export type ResolvedPart = {

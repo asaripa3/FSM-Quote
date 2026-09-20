@@ -23,8 +23,8 @@ function mockFetch(t,{ambiguous=false,failContents=false,parts=null,equipment='M
              {url:'https://www.youtube.com/watch?v=abc',title:'Replacing a seized Moen cartridge',highlights:['Pull the retaining clip before the puller goes on, or the brass will gall.']}],
     output:{content:{evidenceSummary:'Moen documentation ties a dripping single-handle Posi-Temp valve to a seized cartridge, and says to identify the valve body before ordering.',contradicts:'',
       checkBeforeReplacing:['Read the valve body stamp','Check the retaining clip is intact'],
-      repairPaths:[{component:'Posi-Temp cartridge',rationale:'Documented cause of drip after shutoff.',confirmBy:'Valve body stamp reads Posi-Temp.',evidenceLevel:'oem'},
-                   {component:'No part required, seized retaining clip',rationale:'A galled clip presents the same symptom.',confirmBy:'Clip releases by hand.',evidenceLevel:'field_only'}]}},
+      repairPaths:[{component:'Posi-Temp cartridge',rationale:'Documented cause of drip after shutoff.',confirmBy:'Valve body stamp reads Posi-Temp.',support:'Posi-Temp valves built after 1993 use the 1222 cartridge.'},
+                   {component:'No part required, seized retaining clip',rationale:'A galled clip presents the same symptom.',confirmBy:'Clip releases by hand.',support:'Pull the retaining clip before the puller goes on'}]}},
     grounding:[]});
   if(String(url).endsWith('/search')&&!body.category)return reply({requestId:'discover',results:[{url:'https://manufacturer.example/cartridge',text:'Moen 1222 cartridge is a Posi-Temp replacement cartridge.',title:'Moen cartridge guide'}],output:{content:{parts:[{name:'Moen 1222 cartridge',manufacturer:'Moen',partNumber:'1222',sku:'',coversFaults:['part-1'],reason:'Candidate only. Check the valve family.',evidence:'Moen 1222 cartridge is a Posi-Temp replacement cartridge.',conflicts:[],questions:['Is this a Posi-Temp valve?']}]},grounding:[{field:'parts[0].name',confidence:'high',citations:[{url:'https://manufacturer.example/cartridge'}]}]},costDollars:{total:.01}});
   if(String(url).endsWith('/search'))return reply({requestId:'product',results:[{url:supplier,title:'Moen 1222 cartridge'}],costDollars:{total:.005}});
@@ -78,7 +78,11 @@ test('an uncertain note is researched and then stops, with nothing sourced or pr
  assert.equal(packet.checkBeforeReplacing.length,2);
  // A path that needs no part at all is a real answer, and the schema has to be able to say so.
  assert.ok(packet.repairPaths.some(p=>/no part required/i.test(p.component)));
+ // The level comes from where each support was found, never from a label the model wrote: the
+ // cartridge quote is on Moen's own page, the clip quote only on the video.
  assert.deepEqual(packet.repairPaths.map(p=>p.evidenceLevel),['oem','field_only']);
+ assert.match(packet.repairPaths[0].support,/Posi-Temp valves built after 1993/);
+ assert.equal(packet.repairPaths[0].sourceUrls[0],'https://www.moen.com/support/cartridge-identification');
  // Both are classified rather than listed raw, and the manufacturer's own page leads.
  assert.equal(packet.sources[0].kind,'oem');
  assert.equal(packet.sources.find(s=>s.domain==='youtube.com').kind,'practitioner');
@@ -428,6 +432,7 @@ test('a fault the documentation contradicts is stated as a correction, not burie
     results:[{url:'https://www.carrier.com/48tc-service.pdf',title:'48TC service manual',highlights:['The IGC LED reports faults as 1 to 9 flashes.']}],
     output:{content:{evidenceSummary:'The IGC uses a self-diagnostic LED.',
       contradicts:'The 48TC IGC reports faults as 1 to 9 LED flashes; there is no code 31. Five flashes is an ignition lockout.',
+      contradictsSupport:'The IGC LED reports faults as 1 to 9 flashes.',
       checkBeforeReplacing:['Observe the IGC LED through the viewport and count the flash sequence.'],
       repairPaths:[]}}});
   if(String(url).endsWith('/search'))return Response.json({requestId:'f',costDollars:{total:.007},results:[]});
@@ -469,7 +474,7 @@ test('a failed practitioner top-up keeps the documentation packet and says what 
   if(String(url).endsWith('/search')&&body.outputSchema?.properties?.repairPaths){searches++;return Response.json({requestId:'r',costDollars:{total:.007},
     results:[{url:'https://www.carrier.com/48tc.pdf',title:'48TC manual',highlights:['Five flashes indicates an ignition lockout fault.']}],
     output:{content:{evidenceSummary:'Five flashes is an ignition lockout.',contradicts:'',checkBeforeReplacing:['Check the igniter gap'],
-      repairPaths:[{component:'Igniter',rationale:'Documented cause.',confirmBy:'Measure the gap.',evidenceLevel:'oem'}]}}});}
+      repairPaths:[{component:'Igniter',rationale:'Documented cause.',confirmBy:'Measure the gap.',support:'Five flashes indicates an ignition lockout fault.'}]}}});}
   // The top-up is the only call that fails.
   if(String(url).endsWith('/search'))throw Error('field search timed out');
   throw Error('unexpected '+url);
@@ -488,4 +493,29 @@ test('a failed practitioner top-up keeps the documentation packet and says what 
  assert.equal(packet.sources.length,1);
  assert.ok(events.some(e=>e.event==='awaiting_confirmation'));
  assert.ok(!events.some(e=>e.event==='error'));
+});
+
+test('uncertain Moen observations with parser questions automatically research without a chosen part',async t=>{
+ const calls=mockFetch(t,{ambiguous:true,parts:[]});
+ const provider=globalThis.fetch;
+ globalThis.fetch=async(url,init)=>{
+  const response=await provider(url,init);
+  if(!String(url).includes('chat/completions'))return response;
+  const body=await response.json(),parsed=JSON.parse(body.choices[0].message.content);
+  parsed.questions=['What is the exact cartridge number?','Has the cartridge been removed?','Is the cartridge the cause?'];
+  body.choices[0].message.content=JSON.stringify(parsed);
+  return reply(body);
+ };
+ const events=await run('Older Moen single handle shower drips; cartridge model unknown. Handle and trim are fine. Cartridge has not been removed or confirmed as the cause.');
+ const parsed=events.find(e=>e.event==='job_parsed').data;
+ assert.equal(parsed.brief.needsResearch,true);
+ assert.equal(parsed.knownParts.length,0);
+ assert.equal(parsed.questions.length,3);
+ const names=events.map(e=>e.event);
+ assert.ok(names.indexOf('retrieving_knowledge')>names.indexOf('job_parsed'));
+ assert.ok(names.indexOf('research_complete')>names.indexOf('retrieving_knowledge'));
+ assert.equal(names.at(-1),'awaiting_confirmation');
+ assert.ok(!names.includes('discovery_complete'));
+ assert.ok(!calls.some(c=>c.body.category==='product'));
+ assert.ok(events.find(e=>e.event==='research_complete').data.checkBeforeReplacing.length>0);
 });

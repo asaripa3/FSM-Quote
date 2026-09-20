@@ -20,12 +20,29 @@ const COMMERCE_PATH = /(?:^|\/)(?:products?|p|dp|pd|item|sku|catalog|shop|store|
  * manuals Exa returned during testing was served from a Russian file host. Authority comes from the
  * manufacturer's own domain, never from the file extension.
  */
+/** Suffixes that are two labels deep, so the registrable name is the third from the right. */
+const TWO_LABEL_SUFFIX = /\.(?:co|com|net|org|gov|edu|ac)\.[a-z]{2}$/;
+/**
+ * The registrable name of a host: "carrier" from carrier.com, docs.carrier.com and carrier.co.uk.
+ *
+ * Substring matching was the bug this replaces. "carrier-manuals.example" contains the maker's name
+ * and is not the maker; neither is "carrier.com.unrelated.example", which is a subdomain of
+ * unrelated.example dressed to look otherwise. Only the registrable label counts.
+ */
+function registrableName(domain: string) {
+  const labels = domain.split(".");
+  const depth = TWO_LABEL_SUFFIX.test(domain) ? 3 : 2;
+  return labels.length >= depth ? labels[labels.length - depth] : labels[0] ?? "";
+}
+
 export function sourceKind(url: string, title: string, manufacturer: string, suppliers: string[] = []): SourceKind {
   const domain = host(url);
   if (!domain) return "unknown";
   const maker = slug(manufacturer);
-  // The manufacturer's own domain, allowing for the separate document hosts OEMs publish through.
-  if (maker.length >= 3 && slug(domain).includes(maker)) return "oem";
+  // The manufacturer's own domain. A maintained mapping of maker to verified publication hosts would
+  // be stronger still, and would cover the separate document hosts some OEMs publish through; this
+  // at least refuses everything that merely borrows the name.
+  if (maker.length >= 3 && slug(registrableName(domain)) === maker) return "oem";
   if (AGGREGATORS.test(domain)) return "unknown";
   if (VIDEO.test(domain)) return "practitioner";
   if (FORUMS.test(domain) || /(?:^|\/)(?:forum|thread|topic)s?(?:\/|$)/.test(path(url))) return "forum";
@@ -121,4 +138,21 @@ export function looksLikeNavigation(highlight: string) {
   const chrome = (text.match(CHROME) ?? []).length;
   // Two or more distinct furniture phrases, or a sixth of the excerpt spent on them, is a nav page.
   return chrome >= 2 || chrome * 120 > text.length;
+}
+
+/** Designation-shaped tokens in free text: at least two letters and two digits, run together. */
+export function designationsIn(text: string) {
+  return [...new Set((text.match(/\b[A-Za-z0-9][A-Za-z0-9-]{3,19}\b/g) ?? [])
+    .filter(token => (token.match(/[A-Za-z]/g) ?? []).length >= 2 && (token.match(/\d/g) ?? []).length >= 2))];
+}
+
+const MEASUREMENT = /\b\d+(?:[./]\d+)?\s?(?:v|volts?|a|amps?|hz|psi|gpm|gpf|hp|mfd|microfarads?|ohms?|"|in|inch(?:es)?|mm|cm)\b/gi;
+/**
+ * Measurement-shaped requirements stated in free text, for example "120 V" or "45/5 microfarad".
+ *
+ * Used only to recover context a caller failed to carry. The values come from the text verbatim, so
+ * nothing is invented; the field name is left generic because guessing one would be.
+ */
+export function measurementsIn(text: string) {
+  return [...new Set((text.match(MEASUREMENT) ?? []).map(v => v.replace(/\s+/g, " ").trim()))];
 }

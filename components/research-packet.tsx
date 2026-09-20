@@ -16,6 +16,8 @@ const MATCH_LABEL: Record<ModelMatch, string> = {
   none: "does not name this equipment",
 };
 
+const hostOf = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
+
 const STRENGTH_LABEL = { authoritative: "Authoritative", corroborating: "Corroborating", anecdotal: "Unverified" } as const;
 
 function SourceRow({ source }: { source: ResearchSource }) {
@@ -104,6 +106,7 @@ export function ResearchPacketView({ brief, packet, onConfirm, busy }: {
         <section className="packet-block packet-contradiction">
           <h3>Check this before anything else</h3>
           <p>{packet.contradicts}</p>
+          {packet.contradictsSupport && <blockquote>{packet.contradictsSupport}<cite>{packet.contradictsSourceUrls.map(hostOf).join(", ")}</cite></blockquote>}
         </section>
       )}
 
@@ -133,6 +136,7 @@ export function ResearchPacketView({ brief, packet, onConfirm, busy }: {
                   <em data-level={path.evidenceLevel}>{path.evidenceLevel === "oem" ? "OEM documented" : path.evidenceLevel === "corroborated" ? "Two sources agree" : "Field reports only"}</em>
                   <span>{path.rationale}</span>
                   {path.confirmBy && <span className="packet-confirm-by">Confirm by: {path.confirmBy}</span>}
+                  {path.support && <blockquote>{path.support}<cite>{path.sourceUrls.map(hostOf).join(", ")}</cite></blockquote>}
                 </span>
               </label>
             ))}

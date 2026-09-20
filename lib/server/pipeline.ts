@@ -1,5 +1,6 @@
 import type { Confirmation, Discovery, JobPart, JobSettings, PipelineStage, ResolvedPart } from "@/lib/job";
-import { exactCandidate, groundedIdentifier, splitSupersededWork, subjectCandidate } from "@/lib/intent";
+import { dedupeConstraints, describesSameWork, exactCandidate, groundedIdentifier, splitSupersededWork, subjectCandidate } from "@/lib/intent";
+import { designationsIn, measurementsIn } from "@/lib/research";
 import { parseInspection } from "./input";
 import { discoverParts } from "./discovery";
 import { searchProducts } from "./product-search";
@@ -56,15 +57,39 @@ export async function runQuotePipeline(input: PipelineInput, signal: AbortSignal
  */
 async function sourceConfirmedRepair(input: PipelineInput, confirmed: Confirmation, signal: AbortSignal, emit: Emit, progress: (s:PipelineStage,m:string,p?:string)=>void) {
   progress("understanding_input", `Confirmed on site: ${confirmed.component}. Sourcing it now, no re-diagnosis.`);
-  await sourceParts(input, [confirmedPart(confirmed)], signal, emit, progress);
+  await sourceParts(input, [confirmedPart(withNoteContext(confirmed, input.note))], signal, emit, progress);
 }
 
+/**
+ * Recover equipment context the caller did not carry, from the note, without a model call.
+ *
+ * The client should send the plate designation and the stated requirements with the confirmation,
+ * and does. This is the guard for when it does not: a model-specific research phase handing
+ * procurement a generic buying question is how a 120 V requirement and a 48TCED08A2A6 plate get lost
+ * between the two. Both are lifted verbatim from the note, so nothing here is inferred.
+ */
+function withNoteContext(confirmed: Confirmation, note: string): Confirmation {
+  const model = confirmed.model || designationsIn(note).find(token => !describesSameWork(token, confirmed.component)) || "";
+  const constraints = confirmed.constraints?.length ? confirmed.constraints
+    : measurementsIn(note).map(value => ({ field: "stated requirement", value }));
+  return { ...confirmed, model, constraints };
+}
+
+/**
+ * The confirmed repair as a line item, carrying the equipment context with it.
+ *
+ * The model belongs in `equipment` rather than in `subject`, because `subject` is what the price gate
+ * derives an identifier from: a pressure switch page will never carry the rooftop unit's plate
+ * designation, and demanding it there would refuse every correct listing. In `equipment` it reaches
+ * the discovery query, where naming the machine is exactly what makes the part specific.
+ */
 function confirmedPart(confirmed: Confirmation): JobPart {
-  const equipment = confirmed.equipment ?? "";
-  return { id: "part-1", description: confirmed.component, quantity: 1, sku: "", equipment, kind: "part",
-    intent: { rawContext: confirmed.findings, manufacturer: confirmed.manufacturer ?? "", fixture: equipment,
+  const machine = [confirmed.manufacturer, confirmed.model, confirmed.equipment].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  const quantity = Number.isInteger(confirmed.quantity) && confirmed.quantity! > 0 && confirmed.quantity! <= 999 ? confirmed.quantity! : 1;
+  return { id: "part-1", description: confirmed.component, quantity, sku: "", equipment: machine, kind: "part",
+    intent: { rawContext: confirmed.findings, manufacturer: confirmed.manufacturer ?? "", fixture: machine,
       suspectedPart: confirmed.component, subject: confirmed.component, ruledOut: [], supersedes: [],
-      exactModel: "", route: "ambiguous", constraints: [] } };
+      exactModel: "", route: "ambiguous", constraints: dedupeConstraints(confirmed.constraints ?? []) } };
 }
 
 const supplierList = (input: PipelineInput) =>

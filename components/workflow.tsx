@@ -44,7 +44,8 @@ export function Workflow({pack}:{pack:TradePack}) {
   else{setJob(null);setPacket(null);setConfirmed(null);setTrace([]);setEvents([]);}
   try{
    const response=await fetch("/api/quote-stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({trade:pack.id,note:plate.trim()?`${note.trim()}\n\nEquipment plate: ${plate.trim()}`:note,
-    confirmed:confirmation&&{...confirmation,equipment:job?.brief.equipment??"",manufacturer:job?.brief.manufacturer??""},settings:{supplierDomains:settings.supplierDomains,region:settings.region,preferredDomains:settings.preferredDomains||""}}),signal:c.signal});
+    confirmed:confirmation&&{...confirmation,equipment:job?.brief.equipment??"",manufacturer:job?.brief.manufacturer??"",
+     model:job?.brief.model??"",constraints:job?.brief.constraints??[]},settings:{supplierDomains:settings.supplierDomains,region:settings.region,preferredDomains:settings.preferredDomains||""}}),signal:c.signal});
    // The parsed job is needed again when discovery lands, before React has re-rendered with it.
    let parsed:ParsedJob|null=null;
    await readEventStream(response,(event,payload)=>{
@@ -74,6 +75,7 @@ export function Workflow({pack}:{pack:TradePack}) {
  const canPrint=!busy&&allConfirmed&&customer.trim().length>0&&validAmount(hours,1000)&&validAmount(settings.laborRate)&&validAmount(settings.markupPercent,1000);
  const quotePack:TradePack={...pack,config:{...pack.config,laborRate:settings.laborRate,markupPercent:settings.markupPercent},demo:{...pack.demo,customer,site,laborHours:hours,parts:lines.map(l=>l.part)}};
  const inSearch=Object.values(searches).some(s=>s.loading);
+ const researchMessage=[...events].reverse().find(e=>e.stage==="retrieving_knowledge"||e.stage==="reading_documentation")?.message;
  const appendTranscript=(text:string)=>setNote(n=>n?`${n.trim()} ${text.trim()}`:text.trim());
  return <div className="workshop"><div className="page-width">
   <div className="job-heading"><Image src={pack.mascot} alt="" width={pack.mascotW} height={pack.mascotH} unoptimized /><div><p className="eyebrow">{pack.name.toUpperCase()} WORKSPACE</p><h1>Start with what you don’t know.</h1><p>Describe the equipment and what it is doing. FSMpedia researches it, you confirm the repair, then it sources the part.</p></div><div className="heading-controls"><ToggleControl label="Exa" enabled={showExa} onToggle={()=>setShowExa(v=>!v)}/><button className="secondary-button" onClick={()=>setShowSettings(true)}>⚙ Rates & suppliers</button></div></div>
@@ -86,13 +88,13 @@ export function Workflow({pack}:{pack:TradePack}) {
         <div className="note-actions">{job?<button className="secondary-button" disabled={busy||inSearch} onClick={()=>{setJob(null);setDiscovery(null);setSearches({});setPicks({});setEvents([]);setTrace([]);}}>Start again</button>:<button className="primary-button" disabled={busy||note.trim().length<12} onClick={()=>analyze()}>{busy?"Reading…":"Research this job"}<span>→</span></button>}</div>{error&&<div className="form-error" role="alert"><p>{error}</p>
      <button className="text-button" disabled={busy} onClick={()=>analyze(confirmed??undefined)}>
       ↻ {confirmed?`Retry sourcing ${confirmed.component}`:packet?"Retry research":"Try again"}</button></div>}</div></section>
-   {job?<section className="job-card"><header><div><span className="section-number">02</span><h2>{discovery?"Your parts list":packet?"What the evidence says":"Reading your note"}</h2></div><span>{discovery&&discovery.pagesScanned>0?`${discovery.pagesScanned} pages read`:""}</span></header><div className="job-card-body">
+   {job?<section className="job-card"><header><div><span className="section-number">02</span><h2>{discovery?"Your parts list":packet?"What the evidence says":busy&&job.brief.needsResearch?"Researching the equipment":"Your field observations"}</h2></div><span>{discovery&&discovery.pagesScanned>0?`${discovery.pagesScanned} pages read`:""}</span></header><div className="job-card-body">
     <NoteReplay note={note} job={job} collapsed={!!(discovery||packet)&&!busy}/>
     <EpistemicState packet={packet} confirmed={confirmed} busy={busy}/>
     <JobContext brief={job.brief}/>
-    {stage==="researching"&&!packet&&<p className="search-status" role="status"><span className="pulse-dot"/>Exa is reading manufacturer documentation and technician resources for this equipment…</p>}
+    {busy&&stage==="researching"&&job.brief.needsResearch&&!packet&&<div className="research-status" role="status" aria-live="polite"><p className="search-status"><span className="pulse-dot"/>{researchMessage||"Your note needs research. Exa is finding documentation for this equipment…"}</p><p>No extra step is needed. The evidence and checks will appear here before any parts are sourced.</p></div>}
     {packet&&!discovery&&<ResearchPacketView brief={job.brief} packet={packet} busy={busy} onConfirm={c=>analyze(c)}/>}
-    {!discovery&&!packet&&job.questions.length>0&&<div className="review-questions"><strong>Still unknown</strong><ul>{job.questions.map(q=><li key={q}>{q}</li>)}</ul></div>}
+    {!busy&&!discovery&&!packet&&job.questions.length>0&&<div className="review-questions"><strong>Still unknown</strong><ul>{job.questions.map(q=><li key={q}>{q}</li>)}</ul></div>}
      {discovery&&<div className={showExa?"exa-on":"exa-off"}>
       {discovery.parts.some(r=>r.partIds.length>1&&r.verified)&&<p className="consolidated-note">One kit below already covers what a second line item would have duplicated.</p>}
       {discovery.parts.length===0&&<p className="empty-message">No orderable part could be confirmed from the retrieved pages. Add the equipment model or part number and try again.</p>}

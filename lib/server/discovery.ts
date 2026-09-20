@@ -59,6 +59,7 @@ const SCHEMA = { type:"object", required:["parts"], properties:{ parts:{ type:"a
 export async function discoverParts(parts: Incoming[], signal?: AbortSignal, alternatives = false): Promise<Discovery> {
     const fixtures = [...new Set(parts.map(p=>p.equipment).filter(Boolean))];
     const cited = parts.filter(p=>p.sku).map(p=>p.sku);
+    const required = dedupeConstraints(parts.flatMap(p=>p.intent?.constraints ?? []));
     // Exa reads the query like a search box; the rules and the fault ids belong in systemPrompt.
     const chosen = parts.filter(p=>p.kind==="tool"||p.kind==="unit");
     // A run of already-chosen items is a buying question, so it is asked as one: what the technician
@@ -66,7 +67,7 @@ export async function discoverParts(parts: Incoming[], signal?: AbortSignal, alt
     const query = alternatives ? `Manufacturer documentation comparing possible replacement parts and distinguishing equipment specifications for ${parts.map(p=>p.intent?.rawContext || `${p.equipment}: ${p.description}`).join("; ")}.`
       : chosen.length === parts.length ? `${chosen.map(p=>p.intent?.subject||p.description).join(", ")} - product pages giving the manufacturer model number and where to buy it`
       : `${fixtures.join(" and ") || parts[0].description} repair parts for ${parts.map(p=>p.description).join(", ")}`;
-    const systemPrompt = `${rules(alternatives)}${chosen.length?CHOSEN_RULES:""}\n\nREPORTED FAULTS (use these exact ids in coversFaults):\n${parts.map(p=>`- ${p.id}:${p.kind==="tool"?" [tool]":p.kind==="unit"?" [unit]":""} ${p.kind==="tool"||p.kind==="unit"?(p.intent?.subject||p.description):p.description}${p.equipment&&p.kind!=="unit"?` (${p.kind==="tool"?"for work on":"on"} ${p.equipment})`:""}`).join("\n")}${cited.length?`\n\nPart numbers already on the work order: ${cited.join(", ")}. Explain in reason whether the sources establish a replacement relationship.`:""}`;
+    const systemPrompt = `${rules(alternatives)}${chosen.length?CHOSEN_RULES:""}\n\nREPORTED FAULTS (use these exact ids in coversFaults):\n${parts.map(p=>`- ${p.id}:${p.kind==="tool"?" [tool]":p.kind==="unit"?" [unit]":""} ${p.kind==="tool"||p.kind==="unit"?(p.intent?.subject||p.description):p.description}${p.equipment&&p.kind!=="unit"?` (${p.kind==="tool"?"for work on":"on"} ${p.equipment})`:""}`).join("\n")}${cited.length?`\n\nPart numbers already on the work order: ${cited.join(", ")}. Explain in reason whether the sources establish a replacement relationship.`:""}${required.length?`\n\nSTATED REQUIREMENTS the replacement must meet: ${required.map(c=>`${c.field} ${c.value}`).join("; ")}. A candidate that cannot meet these is the wrong candidate.`:""}`;
 
     const started = Date.now();
     // Use one content view: technical tables need full context for the evidence check.
