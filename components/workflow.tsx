@@ -85,10 +85,12 @@ export function Workflow({pack}:{pack:TradePack}) {
   confirmed?description=>describesSameWork(confirmed.component,description):undefined),[job,discovery,picks,confirmed]);
  const fullTrace=useMemo(()=>[...researchTrace,...trace],[researchTrace,trace]);
  const allConfirmed=lines.length>0&&Object.values(picks).every(p=>p.confirmed&&p.price>0&&validAmount(p.price)&&p.source.matchStatus!=="rejected");
- // Offered only where it is the honest reading: a repair was confirmed, sourcing ran, and nothing is
- // selected. It is never inferred - the technician ticks it - because "no part found" and "no part
- // needed" look identical from here and mean opposite things.
- const nothingToSource=!!confirmed&&!!discovery&&lines.length===0;
+ // Offered only where it is the honest reading: a repair was confirmed, sourcing ran, and it found
+ // nothing to buy. It is never inferred - the technician ticks it - because "no part found" and "no
+ // part needed" look identical from here and mean opposite things. Keyed on candidates rather than on
+ // selected lines, or unticking a row would offer to quote labour for a repair that has a part listed
+ // right above the offer.
+ const nothingToSource=!!confirmed&&!!discovery&&discovery.parts.length===0;
  const work=labourOnly&&nothingToSource&&confirmed?{component:confirmed.component,findings:confirmed.findings}:null;
  const canPrint=!busy&&(allConfirmed||(!!work&&hours>0))&&customer.trim().length>0&&validAmount(hours,1000)&&validAmount(settings.laborRate)&&validAmount(settings.markupPercent,1000);
  const quotePack:TradePack={...pack,config:{...pack.config,laborRate:settings.laborRate,markupPercent:settings.markupPercent},demo:{...pack.demo,customer,site,laborHours:hours,parts:lines.map(l=>l.part)}};
