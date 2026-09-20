@@ -21,7 +21,7 @@ function mockFetch(t,{ambiguous=false,failContents=false,parts=null,equipment='M
   if(String(url).endsWith('/search')&&body.outputSchema?.properties?.repairPaths)return reply({requestId:'research',resolvedSearchType:'neural',costDollars:{total:.007},
     results:[{url:'https://www.moen.com/support/cartridge-identification',title:'Moen cartridge identification',highlights:['Posi-Temp valves built after 1993 use the 1222 cartridge. Confirm the valve body stamp before ordering.']},
              {url:'https://www.youtube.com/watch?v=abc',title:'Replacing a seized Moen cartridge',highlights:['Pull the retaining clip before the puller goes on, or the brass will gall.']}],
-    output:{content:{evidenceSummary:'Moen documentation ties a dripping single-handle Posi-Temp valve to a seized cartridge, and says to identify the valve body before ordering.',
+    output:{content:{evidenceSummary:'Moen documentation ties a dripping single-handle Posi-Temp valve to a seized cartridge, and says to identify the valve body before ordering.',contradicts:'',
       checkBeforeReplacing:['Read the valve body stamp','Check the retaining clip is intact'],
       repairPaths:[{component:'Posi-Temp cartridge',rationale:'Documented cause of drip after shutoff.',confirmBy:'Valve body stamp reads Posi-Temp.',evidenceLevel:'oem'},
                    {component:'No part required, seized retaining clip',rationale:'A galled clip presents the same symptom.',confirmBy:'Clip releases by hand.',evidenceLevel:'field_only'}]}},
@@ -73,6 +73,8 @@ test('an uncertain note is researched and then stops, with nothing sourced or pr
 
  const packet=events.find(e=>e.event==='research_complete').data;
  assert.match(packet.evidenceSummary,/Posi-Temp/);
+ // Nothing in this note is contradicted by the documentation, so the correction stays empty.
+ assert.equal(packet.contradicts,'');
  assert.equal(packet.checkBeforeReplacing.length,2);
  // A path that needs no part at all is a real answer, and the schema has to be able to say so.
  assert.ok(packet.repairPaths.some(p=>/no part required/i.test(p.component)));
@@ -405,4 +407,38 @@ test('a priced row carries its price into the estimate even when the page is sil
   assert.equal(openingPrice({price:42, packQuantity:10}), 42);
   // A row with no accepted price still contributes nothing.
   assert.equal(openingPrice({price:null, packQuantity:null}), 0);
+});
+
+
+test('a fault the documentation contradicts is stated as a correction, not buried in the summary',async t=>{
+ // The run this guards: a technician reported "fault code 31" on a Carrier IGC, which reports faults
+ // as one to nine LED flashes and has no code 31. Replacing a part on a misread code is the expensive
+ // mistake, so the correction gets its own field rather than a sentence inside the prose.
+ const original=globalThis.fetch;t.after(()=>{globalThis.fetch=original;});
+ globalThis.fetch=async(url,init)=>{
+  const body=JSON.parse(init.body);
+  if(String(url).includes('chat/completions'))return Response.json({choices:[{message:{content:JSON.stringify({summary:'Rooftop unit',equipment:'Carrier rooftop unit',laborHours:null,
+    brief:{equipment:'Carrier rooftop unit',manufacturer:'Carrier',model:'',serial:'',faultCodes:['31'],symptoms:['inducer runs, burners never light'],alreadyChecked:[],stillUncertain:['pressure switch not tested']},
+    parts:[],questions:[]})}}]});
+  if(String(url).endsWith('/search')&&body.outputSchema?.properties?.repairPaths)return Response.json({requestId:'r',costDollars:{total:.007},
+    results:[{url:'https://www.carrier.com/48tc-service.pdf',title:'48TC service manual',highlights:['The IGC LED reports faults as 1 to 9 flashes.']}],
+    output:{content:{evidenceSummary:'The IGC uses a self-diagnostic LED.',
+      contradicts:'The 48TC IGC reports faults as 1 to 9 LED flashes; there is no code 31. Five flashes is an ignition lockout.',
+      checkBeforeReplacing:['Observe the IGC LED through the viewport and count the flash sequence.'],
+      repairPaths:[]}}});
+  if(String(url).endsWith('/search'))return Response.json({requestId:'f',costDollars:{total:.007},results:[]});
+  throw Error('unexpected '+url);
+ };
+ const events=[];
+ const response=await POST(new Request('http://localhost/api/quote-stream',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({trade:'hvac',note:'Carrier rooftop unit. Fault code 31. Inducer runs, burners never light. Pressure switch not tested yet.',settings:{region:'United States',supplierDomains:''}})}));
+ await readEventStream(response,(event,data)=>events.push({event,data}));
+ const packet=events.find(e=>e.event==='research_complete').data;
+
+ assert.match(packet.contradicts,/no code 31/);
+ // Nothing is proposed to replace while the reported fault is wrong.
+ assert.equal(packet.repairPaths.length,0);
+ // And the checks say how to establish the real one.
+ assert.match(packet.checkBeforeReplacing[0],/LED/);
+ assert.ok(events.some(e=>e.event==='awaiting_confirmation'));
 });

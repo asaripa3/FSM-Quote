@@ -19,6 +19,24 @@ function Thumb({ src }: { src: string }) {
   );
 }
 
+/**
+ * Where this candidate came from, so procurement reads as the continuation of the research rather
+ * than a second, unrelated tool. The id prefix is set by the router, which is the only place that
+ * actually knows: nothing here is inferred from the part's name.
+ */
+function Provenance({ part }: { part: ResolvedPart }) {
+  const origin = part.id.startsWith("exact-") ? "Named in the note"
+    : part.id.startsWith("sourced-") ? "Named by the technician"
+    : part.id.startsWith("registry-") ? "Resolved on an earlier job"
+    : "Resolved from documentation";
+  return (
+    <p className="cart-provenance">
+      <span data-origin="router">{origin}</span>
+      {part.verified && part.sourceLabel && <span data-origin="evidence">Evidence on {part.sourceLabel}</span>}
+    </p>
+  );
+}
+
 function Offer({ source, part, picked, quantity, onPick, onQuantity }: {
   source: SourceOption; part: ResolvedPart; picked: boolean; quantity: number;
   onPick: (pick: PickedSource | null) => void; onQuantity: (value: number) => void;
@@ -46,6 +64,7 @@ function Offer({ source, part, picked, quantity, onPick, onQuantity }: {
         {source.packQuantity && source.packQuantity > 1 && <span className="cart-pack warn">pack of {source.packQuantity} — set unit cost</span>}
         {source.currencyAssumed && <span className="cart-pack">$ read as USD</span>}
         {source.priceStatus === "cached-page" && <span className="cart-pack">cached copy</span>}
+        <span className="cart-provenance-row" data-priced={source.price !== null}>{source.price !== null ? "Public price observed" : "No price published"}</span>
       </td>
       <td className="cart-qty">
         <input type="number" min="1" max="999" step="1" value={quantity} disabled={!picked}
@@ -80,6 +99,7 @@ export function PartsCart({ discovery, searches, picks, quantities, onPick, onQu
                 <span className="cart-index">ITEM {String(index + 1).padStart(2, "0")}</span>
                 <h3>{part.name}</h3><p className="cart-path">{part.route==="exact"?"Exact part from your note":"Candidate discovered by Exa"}{part.confidence?` · ${part.confidence} source confidence`:""}</p>
                 <p className="cart-ids">{[part.manufacturer, part.partNumber && `Part ${part.partNumber}`, part.sku && `SKU ${part.sku}`].filter(Boolean).join(" · ")}</p>
+                <Provenance part={part} />
               </div>
               <button className="text-button" onClick={() => onRemove(part.id)} disabled={busy||search?.loading}>Remove</button>
             </header>
