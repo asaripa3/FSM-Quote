@@ -46,7 +46,7 @@ export type Part = {
   /**
    * Set when the note cites a part number that the manufacturer has since
    * discontinued. Resolving this is the clearest Exa-only capability: an ERP
-   * knows what was bought three years ago, not what replaces it today (§17).
+   * knows what was bought three years ago, not what replaces it today.
    */
   superseded?: {
     from: string;
@@ -344,7 +344,8 @@ export const money = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 
 /**
- * Deterministic quote math. Never delegated to a model — see plan §20.
+ * Deterministic quote math. Never delegated to a model: labour and markup are the contractor's
+ * own rules, so nothing here may come from the web or from a generated number.
  */
 export function buildQuote(
   unitPrices: number[],

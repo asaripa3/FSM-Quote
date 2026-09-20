@@ -27,7 +27,11 @@ process.env.LIVEKIT_API_KEY ||= "test-key";
 process.env.LIVEKIT_API_SECRET ||= "test-secret";
 process.env.EXA_API_KEY ||= "test-exa";
 
-const { POST: parsePost } = await import("../app/api/parse/route.ts");
+// Straight to the parser. There is no /api/parse route: it had no caller in the application - the
+// pipeline calls parseInspection directly - and every public route spends provider credit, so an
+// unauthenticated endpoint nothing used was exposure without a purpose. Its validation guards live
+// identically on /api/quote-stream, which is the route the app actually posts to and is tested there.
+const { parseInspection } = await import("../lib/server/input.ts");
 const { discoverParts } = await import("../lib/server/discovery.ts");
 
 const CORE_NOTE = `Men's restroom, second floor. Sloan Royal 111 water closet keeps running after flush — the diaphragm looks worn and the vacuum breaker sleeve is cracked. The Regal urinal beside it is weeping at the diaphragm too. Replace both. Work order says we ordered 3301150 for the closet last time. About 45 minutes labor.`;
@@ -105,13 +109,7 @@ test("a ~1000-word note is sent in full to LiveKit chat completions, not regex-s
     throw new Error(`unexpected fetch ${href}`);
   };
 
-  const res = await parsePost(new Request("http://localhost/api/parse", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ trade: "plumbing", note }),
-  }));
-  const parsed = await res.json();
-  assert.equal(res.status, 200, parsed.error);
+  const parsed = await parseInspection("plumbing", note);
   assert.equal(livekitCalls.length, 1);
   const call = livekitCalls[0];
   assert.equal(call.body.model, "openai/gpt-4.1-mini");
@@ -142,12 +140,7 @@ test("a structured equipment field is read, not rejected as malformed", async (t
     }
     throw new Error(`unexpected fetch ${url}`);
   };
-  const res = await parsePost(new Request("http://localhost/api/parse", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ trade: "plumbing", note: longFieldNote() }),
-  }));
-  const parsed = await res.json();
-  assert.equal(res.status, 200, parsed.error);
+  const parsed = await parseInspection("plumbing", longFieldNote());
   assert.equal(typeof parsed.equipment, "string");
   assert.match(parsed.equipment, /Sloan/);
   assert.match(parsed.equipment, /Royal 111/);
@@ -224,13 +217,7 @@ test("live LiveKit model decomposes the long note into Exa-ready faults", async 
   }
 
   const note = longFieldNote();
-  const res = await parsePost(new Request("http://localhost/api/parse", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ trade: "plumbing", note }),
-  }));
-  const parsed = await res.json();
-  assert.equal(res.status, 200, parsed.error);
+  const parsed = await parseInspection("plumbing", note);
   assert.ok(Array.isArray(parsed.knownParts) && parsed.knownParts.length >= 1, JSON.stringify(parsed));
   assert.ok(parsed.knownParts.every((p) => p.description));
   assert.ok(parsed.knownParts.some((p) => /diaphragm|vacuum|breaker|closet/i.test(`${p.description} ${p.equipment}`)));

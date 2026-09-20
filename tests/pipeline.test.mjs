@@ -617,3 +617,20 @@ test('a mirrored service manual is neither the manufacturer nor a field report',
  assert.equal(packet.sources[0].strength,'corroborating');
  assert.equal(packet.repairPaths[0].evidenceLevel,'documented');
 });
+
+test('a repair that needs no part still produces an estimate', async () => {
+ const { createQuotePdf }=await import('../lib/quote-pdf.ts');
+ const { TRADES, buildQuote }=await import('../lib/trades.ts');
+ const pack={...TRADES.hvac,demo:{...TRADES.hvac.demo,customer:'Northgate Retail Park',site:'Roof, unit 2',laborHours:1,parts:[]}};
+ // The research prompt asks for paths that need no replacement part and returns them; printing used to
+ // require a priced line, so the flow could dead-end on its own best answer.
+ const quote=buildQuote([],[],30,1,165);
+ assert.equal(quote.partsSubtotal,0);assert.equal(quote.labor,165);assert.equal(quote.total,165);
+ const bytes=await createQuotePdf(pack,[],quote,'Northgate HVAC',[],
+   {component:'Venting system',findings:'Flue was blocked with a bird nest. Cleared it, unit fired normally after.'});
+ // One page, and it says on its face that no part was required rather than leaving a blank item list
+ // above a total with nothing behind it.
+ const { PDFDocument }=await import('pdf-lib');
+ assert.equal((await PDFDocument.load(bytes)).getPageCount(),1);
+ assert.ok(bytes.length>1000);
+});
